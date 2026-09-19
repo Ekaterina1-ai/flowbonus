@@ -22,6 +22,9 @@ main() {
   bash "$APP_DIR/server/backup.sh" || echo "предупреждение: бэкап не сделан"
 
   echo "=== git ==="
+  # см. комментарий в deploy.sh: каталог принадлежит flowbonus, git запускает root
+  git config --global --get-all safe.directory 2>/dev/null | grep -qx "$APP_DIR" ||
+    git config --global --add safe.directory "$APP_DIR"
   git -C "$APP_DIR" fetch origin "$BRANCH"
   git -C "$APP_DIR" reset --hard "origin/$BRANCH"
   chown -R "$APP_USER:$APP_USER" "$APP_DIR"
@@ -33,7 +36,7 @@ main() {
   chown -R "$APP_USER:$APP_USER" "$APP_DIR/server/.venv"
 
   echo "=== миграции схемы ==="
-  sudo -u "$APP_USER" FLOWBONUS_DB_PATH="$DATA_DIR/flowbonus.db" \
+  sudo -u "$APP_USER" env FLOWBONUS_DB_PATH="$DATA_DIR/flowbonus.db" \
     .venv/bin/python -c "import db; db.init_db(); print('DB OK:', db.DB_PATH)"
 
   echo "=== перезапуск ==="

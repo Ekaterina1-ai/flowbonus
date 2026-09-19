@@ -20,7 +20,7 @@ read -rsp "Пароль для тестового клиента (+7 900 111-22-
 echo
 
 cd "$APP_DIR/server"
-sudo -u "$APP_USER" \
+sudo -u "$APP_USER" env \
   FLOWBONUS_DB_PATH="$DATA_DIR/flowbonus.db" \
   FLOWBONUS_UPLOAD_DIR="$DATA_DIR/uploads" \
   DEMO_PARTNER_PASSWORD="$PARTNER_PW" \

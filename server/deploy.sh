@@ -25,7 +25,7 @@ fi
 echo "=== 1/8 пакеты ==="
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip git nginx curl sqlite3
+apt-get install -y python3 python3-venv python3-pip git nginx curl sqlite3 sudo
 
 echo "=== 2/8 swap (защита от OOM на тарифах с 1 ГБ RAM) ==="
 if ! swapon --show | grep -q '/swapfile'; then
@@ -40,12 +40,21 @@ fi
 free -h
 
 echo "=== 3/8 пользователь и каталоги данных ==="
-id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin "$APP_USER"
+# Группу создаём явно: useradd не всегда создаёт одноимённую группу,
+# а на неё ссылаются chown и Group= в юните systemd.
+getent group "$APP_USER" >/dev/null || groupadd --system "$APP_USER"
+id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --gid "$APP_USER" \
+  --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$DATA_DIR/uploads" "$DATA_DIR/backups"
 chown -R "$APP_USER:$APP_USER" "$DATA_DIR"
 chmod 750 "$DATA_DIR"
 
 echo "=== 4/8 код приложения ==="
+# Каталог принадлежит flowbonus, а git здесь запускает root. Без этой строки
+# git отказывается работать («detected dubious ownership») и update.sh падает.
+git config --global --get-all safe.directory 2>/dev/null | grep -qx "$APP_DIR" ||
+  git config --global --add safe.directory "$APP_DIR"
+
 if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" remote set-url origin "$REPO"
   git -C "$APP_DIR" fetch origin "$BRANCH"
@@ -83,7 +92,7 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR/server/.venv"
 
 echo "=== 7/8 инициализация базы ==="
 # init_db() создаёт таблицы и индексы, существующие данные не затрагивает.
-sudo -u "$APP_USER" FLOWBONUS_DB_PATH="$DATA_DIR/flowbonus.db" \
+sudo -u "$APP_USER" env FLOWBONUS_DB_PATH="$DATA_DIR/flowbonus.db" \
   .venv/bin/python -c "import db; db.init_db(); print('DB OK:', db.DB_PATH)"
 
 echo "=== 8/8 systemd + nginx ==="
@@ -93,7 +102,25 @@ ln -sfn /etc/nginx/sites-available/flowbonus /etc/nginx/sites-enabled/flowbonus
 rm -f /etc/nginx/sites-enabled/default
 mkdir -p /var/www/html
 
-nginx -t
+# Второй default_server в любом подключённом конфиге ломает nginx -t.
+# Образы с предустановленной панелью иногда оставляют такой в conf.d.
+for extra in /etc/nginx/conf.d/*.conf; do
+  [ -e "$extra" ] || continue
+  case "$extra" in */flowbonus.conf) continue ;; esac
+  if grep -qE 'listen[^;]*default_server' "$extra"; then
+    echo "отключаю конфликтующий default_server: $extra -> $extra.disabled"
+    mv "$extra" "$extra.disabled"
+  fi
+done
+
+# Если конфиг не проходит проверку — откатываем, чтобы не оставить nginx сломанным.
+if ! nginx -t; then
+  echo "ОШИБКА: конфиг nginx не прошёл проверку, откатываю изменения." >&2
+  rm -f /etc/nginx/sites-enabled/flowbonus
+  nginx -t && systemctl reload nginx || true
+  exit 1
+fi
+
 systemctl daemon-reload
 systemctl reset-failed flowbonus 2>/dev/null || true
 systemctl enable flowbonus
