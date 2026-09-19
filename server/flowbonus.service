@@ -11,11 +11,18 @@ WorkingDirectory=/opt/flowbonus/server
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/flowbonus/server
 EnvironmentFile=/etc/flowbonus.env
+# --trusted-proxy обязателен: иначе waitress вырезает заголовки X-Forwarded-*
+# как недоверенные, приложение не узнаёт настоящий адрес сайта и ссылка внутри
+# QR-кода собирается с http://127.0.0.1:5500.
+# Заголовки перечисляются через пробел ОДНИМ аргументом: повторение флага
+# затирает предыдущее значение.
 ExecStart=/opt/flowbonus/server/.venv/bin/waitress-serve \
   --host=127.0.0.1 \
   --port=5500 \
   --threads=4 \
   --channel-timeout=60 \
+  --trusted-proxy=127.0.0.1 \
+  --trusted-proxy-headers="x-forwarded-for x-forwarded-proto x-forwarded-host" \
   wsgi:application
 Restart=always
 RestartSec=3
