@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
+from datetime import timedelta
 from pathlib import Path
 
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from db import (
     add_coins,
@@ -36,14 +40,54 @@ SERVER_DIR = Path(__file__).resolve().parent
 DATA_DIR = SERVER_DIR / "data"
 COIN_PRICE_RUB = 100
 
+# Фотографии партнёров хранятся вне git-каталога на сервере, см. .env.example.
+BUNDLED_PARTNER_ASSETS = ROOT / "assets" / "partners"
+UPLOAD_DIR = Path(os.environ.get("FLOWBONUS_UPLOAD_DIR") or BUNDLED_PARTNER_ASSETS).expanduser()
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
+
 PASSWORD_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9]{6,}$")
 PHONE_RE = re.compile(r"^\+?[0-9\s\-()]{10,20}$")
+
+
+def _load_secret_key() -> str:
+    """SECRET_KEY из окружения; иначе — постоянный файл, чтобы сессии жили между рестартами."""
+    from_env = os.environ.get("SECRET_KEY", "").strip()
+    if from_env:
+        return from_env
+
+    key_file = Path(os.environ.get("FLOWBONUS_SECRET_FILE") or (SERVER_DIR / ".secret_key"))
+    if key_file.is_file():
+        stored = key_file.read_text(encoding="utf-8").strip()
+        if stored:
+            return stored
+
+    generated = secrets.token_urlsafe(48)
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_text(generated, encoding="utf-8")
+    os.chmod(key_file, 0o600)
+    return generated
+
 
 app = Flask(
     __name__,
     static_folder=None,
 )
-app.secret_key = "flowbonus-dev-secret-change-in-production"
+app.secret_key = _load_secret_key()
+app.config.update(
+    MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    JSON_SORT_KEYS=False,
+)
+
+# За nginx-прокси: без этого request.host_url в QR-ссылке уедет на http/127.0.0.1.
+if os.environ.get("TRUST_PROXY", "1") == "1":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+init_db()
 
 
 def load_cities() -> list[str]:
@@ -56,13 +100,6 @@ def load_partners() -> list[dict]:
     path = DATA_DIR / "partners.json"
     with path.open(encoding="utf-8") as f:
         return json.load(f)
-
-
-@app.before_request
-def ensure_db() -> None:
-    if not getattr(app, "_db_ready", False):
-        init_db()
-        app._db_ready = True
 
 
 def current_client():
@@ -116,9 +153,22 @@ def assets_files(filename: str):
     return send_from_directory(ROOT / "assets", filename)
 
 
+@app.get("/assets/partners/<path:filename>")
+def partner_assets_files(filename: str):
+    """Сначала ищем в каталоге загрузок, затем среди картинок из репозитория."""
+    if UPLOAD_DIR != BUNDLED_PARTNER_ASSETS and (UPLOAD_DIR / filename).is_file():
+        return send_from_directory(UPLOAD_DIR, filename)
+    return send_from_directory(BUNDLED_PARTNER_ASSETS, filename)
+
+
 @app.get("/favicon.ico")
 def favicon():
     return send_from_directory(ROOT / "assets", "favicon.ico")
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    return send_from_directory(ROOT, "robots.txt")
 
 
 @app.get("/flowbonus-hero.png")
@@ -493,7 +543,7 @@ def api_partner_upload_image():
 
     import uuid
 
-    folder = ROOT / "assets" / "partners" / f"p{partner['id']}"
+    folder = UPLOAD_DIR / f"p{partner['id']}"
     folder.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}{ext}"
     dest = folder / filename
@@ -511,10 +561,11 @@ def api_partner_delete_image(image_id: int):
     path = delete_partner_image(partner["id"], image_id)
     if not path:
         return jsonify({"error": "Изображение не найдено."}), 404
-    # удаляем файл, если он внутри нашей папки партнёра
+    # удаляем файл, если он лежит в папке загрузок именно этого партнёра
     try:
-        local = ROOT / path.lstrip("/").replace("/", "\\") if False else ROOT.joinpath(*path.strip("/").split("/"))
-        if local.exists() and str(partner["id"]) in str(local):
+        folder = UPLOAD_DIR / f"p{partner['id']}"
+        local = folder / Path(path).name
+        if local.is_file() and local.parent == folder:
             local.unlink(missing_ok=True)
     except OSError:
         pass
@@ -556,12 +607,32 @@ def api_partner_redeem():
     return jsonify({**result, "stats": partner_stats(partner["id"])})
 
 
-if __name__ == "__main__":
-    init_db()
-    print("FlowBonus: http://127.0.0.1:5500")
-    import os
+# ---------- error handlers ----------
 
+@app.errorhandler(413)
+def too_large(_exc):
+    limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+    return jsonify({"error": f"Файл слишком большой. Максимум {limit_mb} МБ."}), 413
+
+
+@app.errorhandler(404)
+def not_found(exc):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Метод не найден."}), 404
+    return exc
+
+
+@app.errorhandler(500)
+def server_error(_exc):
+    app.logger.exception("unhandled error on %s", request.path)
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Внутренняя ошибка сервера."}), 500
+    return "Внутренняя ошибка сервера. Попробуйте позже.", 500
+
+
+if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "5500"))
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    print(f"FlowBonus: http://{host}:{port}")
     app.run(host=host, port=port, debug=debug)

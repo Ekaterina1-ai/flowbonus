@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /cabinet
+Disallow: /partner-cabinet
+Disallow: /partner/scan
+Disallow: /api/

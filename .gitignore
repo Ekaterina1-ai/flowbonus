@@ -8,6 +8,18 @@ env/
 # Secrets / local env
 .env
 .env.*
+!.env.example
+server/.secret_key
+
+# Database (рабочие данные, в репозиторий не коммитим)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Загрузки партнёров (пользовательский контент, живёт на сервере)
+assets/partners/p*/
 
 # OS / editor
 .DS_Store
@@ -21,3 +33,7 @@ Thumbs.db
 
 # Design dumps (not part of the app)
 ChatGPT Image*
+Норма тела.png
+
+# Личные заметки с паролями — не для репозитория
+назв и дом.txt

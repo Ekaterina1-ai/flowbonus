@@ -1,0 +1,34 @@
+[Unit]
+Description=FlowBonus (Waitress WSGI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flowbonus
+Group=flowbonus
+WorkingDirectory=/opt/flowbonus/server
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/flowbonus/server
+EnvironmentFile=/etc/flowbonus.env
+ExecStart=/opt/flowbonus/server/.venv/bin/waitress-serve \
+  --host=127.0.0.1 \
+  --port=5500 \
+  --threads=4 \
+  --channel-timeout=60 \
+  wsgi:application
+Restart=always
+RestartSec=3
+
+# Ограничения ресурсов: маленький VPS не должен уйти в OOM целиком.
+MemoryMax=400M
+
+# Изоляция: приложению нужны только каталог кода и каталог данных.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/flowbonus
+
+[Install]
+WantedBy=multi-user.target

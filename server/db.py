@@ -1,12 +1,16 @@
 """FlowBonus — инициализация SQLite и работа с пользователями."""
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
-DB_PATH = Path(__file__).resolve().parent / "flowbonus.db"
+# На сервере база лежит вне каталога приложения (см. FLOWBONUS_DB_PATH в .env),
+# иначе обновление кода через git затрёт рабочие данные.
+DEFAULT_DB_PATH = Path(__file__).resolve().parent / "flowbonus.db"
+DB_PATH = Path(os.environ.get("FLOWBONUS_DB_PATH") or DEFAULT_DB_PATH).expanduser()
 
 
 def get_connection() -> sqlite3.Connection:
@@ -14,6 +18,8 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 
@@ -106,6 +112,15 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (partner_id) REFERENCES partners(id)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_coin_orders_client ON coin_orders(client_id);
+            CREATE INDEX IF NOT EXISTS idx_spend_tokens_client ON spend_tokens(client_id);
+            CREATE INDEX IF NOT EXISTS idx_spend_tokens_expires ON spend_tokens(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_promo_redemptions_client ON promo_redemptions(client_id);
+            CREATE INDEX IF NOT EXISTS idx_partners_city ON partners(city);
+            CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_partner ON partner_spend_ops(partner_id);
+            CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_client ON partner_spend_ops(client_id);
+            CREATE INDEX IF NOT EXISTS idx_partner_images_partner ON partner_images(partner_id, sort_order);
             """
         )
         # миграция колонок профиля партнёра
