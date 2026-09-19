@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Клиентам — FlowBonus</title>
+  <meta name="description" content="FlowBonus для клиентов: регистрируйтесь, приходите к партнёрам и берите вторую покупку за 1 монету." />
+  <link rel="icon" href="assets/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="assets/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/mobile.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="logo" href="index.html">
+        <img class="logo-mark" src="flowbonus-hero.png" alt="" />
+        Flow<span>Bonus</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu">Меню</button>
+      <ul class="nav-links" id="nav-menu">
+        <li><a href="index.html">Главная</a></li>
+        <li><a class="is-active" href="clients.html">Клиентам</a></li>
+        <li><a href="partners.html">Стать партнером</a></li>
+        <li><a class="btn btn-ghost" href="#" data-open-modal="client-login">Войти</a></li>
+        <li><a class="btn btn-primary" href="#start" data-open-modal="client-register">Начать</a></li>
+      </ul>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero">
+      <div class="container">
+        <p class="eyebrow">Для клиентов</p>
+        <h1>Вторая покупка — за 1 монету</h1>
+        <p>Регистрируйтесь в FlowBonus, выбирайте партнёра рядом и забирайте выгоду на второй товар или услугу той же суммы.</p>
+        <div class="btn-row" style="margin-top: 1.5rem;">
+          <button class="btn btn-gold" type="button" data-open-modal="client-register">Зарегистрироваться</button>
+          <a class="btn btn-ghost" href="#how">Как это работает</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="container">
+        <div class="section-head reveal">
+          <h2>Три шага до бонуса</h2>
+          <p>Без сложной схемы: приложение, партнёр, монета.</p>
+        </div>
+        <div class="steps">
+          <article class="step reveal">
+            <h3>Регистрация</h3>
+            <p>Создаёте профиль клиента FlowBonus — в веб-версии сейчас, позже и в мобильном приложении.</p>
+          </article>
+          <article class="step reveal">
+            <h3>Визит к партнёру</h3>
+            <p>Выбираете точку из сети: салон, бар, автосервис, бассейн и другие.</p>
+          </article>
+          <article class="step reveal">
+            <h3>Покупка + монета</h3>
+            <p>Покупаете первое. Второе на ту же сумму оформляете за 1 монету.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="container split">
+        <div class="reveal">
+          <div class="section-head">
+            <h2>Что вы получаете</h2>
+            <p>FlowBonus — это поток бонусов в повседневных местах, куда вы и так ходите.</p>
+          </div>
+          <ul class="feature-list">
+            <li>
+              <strong>Реальная экономия</strong>
+              <span>Вторая позиция не «в подарок на словах», а по понятной цене монеты.</span>
+            </li>
+            <li>
+              <strong>Много категорий</strong>
+              <span>Одна монета — доступ к разным партнёрам, не только к кафе.</span>
+            </li>
+            <li>
+              <strong>Прозрачные правила</strong>
+              <span>Та же сумма. Одна монета. Партнёр из официальной сети.</span>
+            </li>
+          </ul>
+          <div class="coin-note" style="margin-top: 1.5rem;">
+            <strong>Монета FlowBonus</strong>
+            Это валюта приложения. Пополняете кошелёк когда удобно, покупаете монеты и оплачиваете ими вторую услугу, товар или визит той же стоимости у партнёра сети.
+          </div>
+        </div>
+        <div class="reveal">
+          <div class="section-head">
+            <h2>Куда можно сходить</h2>
+          </div>
+          <div class="categories">
+            <span>Бары и рестораны</span>
+            <span>Салоны красоты</span>
+            <span>Автомастерские</span>
+            <span>Клубы</span>
+            <span>Бассейны</span>
+            <span>Фитнес</span>
+            <span>Услуги</span>
+            <span>Магазины</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="start">
+      <div class="container">
+        <div class="cta-band reveal" style="grid-template-columns: 1fr; justify-items: center; text-align: center;">
+          <div class="btn-row">
+            <button class="btn btn-gold" type="button" data-open-modal="client-register">
+              Создать свой профиль
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal" id="client-register" hidden aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="client-register-title">
+      <button class="modal-close" type="button" data-close-modal aria-label="Закрыть">×</button>
+      <h3 id="client-register-title">Регистрация клиента</h3>
+      <p>Заполните все поля — откроем доступ к партнёрам FlowBonus.</p>
+      <form class="form-grid" action="#" method="post" id="client-register-form">
+        <label>
+          ФИО
+          <input type="text" name="fio" placeholder="Фамилия Имя Отчество" required autocomplete="name" />
+        </label>
+        <label>
+          Номер телефона
+          <input type="tel" name="phone" placeholder="+7 ..." required autocomplete="tel" />
+        </label>
+        <label>
+          Email
+          <input type="email" name="email" placeholder="mail@example.com" required autocomplete="email" />
+        </label>
+        <label>
+          Город
+          <input type="text" name="city" placeholder="Ваш город" required autocomplete="address-level2" />
+        </label>
+        <label>
+          Пароль
+          <input type="password" name="password" placeholder="Минимум 6 букв или цифр" required minlength="6" autocomplete="new-password" />
+        </label>
+        <label>
+          Подтвердите пароль
+          <input type="password" name="password2" placeholder="Повторите пароль" required minlength="6" autocomplete="new-password" />
+        </label>
+        <button class="btn btn-primary" type="submit">Создать профиль</button>
+        <p class="form-note" id="client-register-error"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="client-login" hidden aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="client-login-title">
+      <button class="modal-close" type="button" data-close-modal aria-label="Закрыть">×</button>
+      <h3 id="client-login-title">Вход в кабинет</h3>
+      <div class="login-role-switch" role="tablist">
+        <button type="button" class="login-role is-active" data-login-role="client">Клиент</button>
+        <button type="button" class="login-role" data-login-role="partner">Партнёр</button>
+      </div>
+      <p id="login-role-hint">Логин — номер телефона, пароль — из регистрации.</p>
+      <form class="form-grid" action="#" method="post" id="client-login-form">
+        <input type="hidden" name="role" id="login-role-input" value="client" />
+        <label>
+          Номер телефона
+          <input type="tel" name="phone" placeholder="+7 ..." required autocomplete="username" />
+        </label>
+        <label>
+          Пароль
+          <input type="password" name="password" placeholder="Ваш пароль" required autocomplete="current-password" />
+        </label>
+        <button class="btn btn-primary" type="submit">Войти</button>
+        <p class="form-note" id="client-login-error"></p>
+        <button class="link-support" type="button" data-open-modal="support-stub">Не могу войти, обратиться в техподдержку</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="support-stub" hidden aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="support-stub-title">
+      <button class="modal-close" type="button" data-close-modal aria-label="Закрыть">×</button>
+      <h3 id="support-stub-title">Техподдержка</h3>
+      <p>Раздел временно в разработке. Скоро здесь появится чат и контакты поддержки FlowBonus.</p>
+      <button class="btn btn-gold" type="button" data-close-modal>Понятно</button>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>
+        <strong>FlowBonus</strong><br />
+        flowbonus.ru · потокбонусов.рф
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Главная</a>
+        <a href="partners.html">Стать партнером</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+  <script src="js/mobile.js"></script>
+</body>
+</html>

@@ -1,0 +1,375 @@
+/**
+ * FlowBonus — мобильная версия публичных страниц
+ * Редактируйте этот файл отдельно от desktop (styles.css).
+ * Активно при ширине ≤ 768px.
+ */
+
+:root {
+  --m-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --m-safe-top: env(safe-area-inset-top, 0px);
+  --m-touch: 44px;
+}
+
+@media (max-width: 768px) {
+  body {
+    padding-bottom: calc(0.5rem + var(--m-safe-bottom));
+    overflow-x: hidden;
+  }
+
+  .container {
+    width: min(100% - 1.75rem, var(--max));
+  }
+
+  .site-header {
+    padding-top: var(--m-safe-top);
+    /* backdrop-filter ломает fixed-меню внутри хедера */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(247, 245, 240, 0.97);
+    overflow: visible;
+  }
+
+  .nav {
+    padding: 0.55rem 0;
+    gap: 0.5rem;
+    position: relative;
+  }
+
+  .logo {
+    font-size: 1rem;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .logo-mark {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: var(--m-touch);
+    min-height: 40px;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: #fff;
+    font-weight: 650;
+    font-size: 0.88rem;
+    z-index: 120;
+  }
+
+  /* Меню переносится в body через mobile.js — класс .m-nav-drawer */
+  .nav-links.m-nav-drawer,
+  body > .nav-links {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    margin: 0;
+    list-style: none;
+    padding: calc(4.5rem + var(--m-safe-top)) 1.35rem calc(1.5rem + var(--m-safe-bottom));
+    background:
+      radial-gradient(900px 420px at 10% -10%, rgba(198, 160, 58, 0.18), transparent 55%),
+      linear-gradient(180deg, #f7f5f0 0%, var(--paper) 45%, #ebe7de 100%);
+    border: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    animation: m-sheet-in 0.28s var(--ease);
+  }
+
+  .nav-links.m-nav-drawer.is-open,
+  body > .nav-links.is-open {
+    display: flex;
+  }
+
+  .nav-links.m-nav-drawer li,
+  body > .nav-links li {
+    border-top: 1px solid var(--line);
+  }
+
+  .nav-links.m-nav-drawer li:first-child,
+  body > .nav-links li:first-child {
+    border-top: 0;
+  }
+
+  .nav-links.m-nav-drawer a,
+  body > .nav-links a {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 0.85rem 0.1rem;
+    font-size: 1.12rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+
+  .nav-links.m-nav-drawer .btn,
+  body > .nav-links .btn {
+    width: 100%;
+    margin-top: 0.4rem;
+    justify-content: center;
+    color: inherit;
+  }
+
+  .nav-links.m-nav-drawer .btn-primary,
+  body > .nav-links .btn-primary {
+    color: var(--ink);
+  }
+
+  body.m-nav-open {
+    overflow: hidden;
+  }
+
+  body.m-nav-open .site-header {
+    z-index: 110;
+    background: rgba(247, 245, 240, 0.98);
+  }
+
+  /* —— Hero —— */
+  .hero {
+    min-height: min(72vh, 560px);
+    border-radius: 0;
+  }
+
+  .hero-content {
+    max-width: none;
+    width: min(100% - 1.75rem, var(--max));
+    margin-inline: auto;
+    padding: clamp(4.25rem, 10vh, 5.5rem) 0 1.5rem;
+    box-sizing: border-box;
+  }
+
+  .brand-lockup {
+    font-size: clamp(1.7rem, 8.2vw, 2.35rem);
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin: 0 0 0.75rem;
+    max-width: 100%;
+    padding-right: 0.15em; /* чтобы последняя «s» не обрезалась overflow:hidden у .hero */
+    overflow-wrap: normal;
+    word-break: keep-all;
+  }
+
+  .hero-lead {
+    font-size: clamp(1.05rem, 4.2vw, 1.3rem);
+    margin-bottom: 0.5rem;
+  }
+
+  .hero-text {
+    font-size: 0.92rem;
+    line-height: 1.5;
+    max-width: 34ch;
+    margin-bottom: 1.15rem;
+  }
+
+  .hero-content .btn-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+    max-width: 280px;
+  }
+
+  .hero-content .btn {
+    width: 100%;
+    min-height: 42px;
+    padding: 0.7rem 1rem;
+    font-size: 0.92rem;
+  }
+
+  /* —— Типографика секций —— */
+  .section,
+  main > section {
+    padding-block: 2rem;
+  }
+
+  .page-hero {
+    padding: 2rem 0 1.5rem;
+  }
+
+  .page-hero h1 {
+    font-size: clamp(1.65rem, 7vw, 2.2rem);
+    max-width: 16ch;
+  }
+
+  .page-hero p {
+    font-size: 0.95rem;
+  }
+
+  .page-hero .btn-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+    max-width: 300px;
+  }
+
+  .page-hero .btn {
+    width: 100%;
+    min-height: 42px;
+    padding: 0.7rem 1rem;
+    font-size: 0.92rem;
+  }
+
+  .section-head h2,
+  .split h2 {
+    font-size: clamp(1.4rem, 5.8vw, 1.85rem);
+  }
+
+  .section-head p {
+    font-size: 0.92rem;
+  }
+
+  .btn {
+    min-height: 42px;
+    padding: 0.7rem 1.1rem;
+    font-size: 0.92rem;
+  }
+
+  .btn:hover {
+    transform: none;
+  }
+
+  .btn:active {
+    transform: scale(0.98);
+  }
+
+  .btn-row {
+    gap: 0.55rem;
+  }
+
+  /* —— FAQ компактнее —— */
+  .faq-list {
+    gap: 0.45rem;
+    max-width: none;
+  }
+
+  .faq-item summary {
+    min-height: 0;
+    padding: 0.75rem 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.35;
+    gap: 0.65rem;
+  }
+
+  .faq-item summary::after {
+    font-size: 1.05rem;
+  }
+
+  .faq-body {
+    padding: 0 0.85rem 0.85rem;
+  }
+
+  .faq-item[open] .faq-body {
+    padding-top: 0.65rem;
+  }
+
+  .faq-body p {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    margin-bottom: 0.65rem;
+  }
+
+  /* —— Карточки / сетки —— */
+  .step,
+  .audience-card,
+  .compare-col,
+  .feature-list li,
+  .tp-block {
+    padding: 1rem;
+  }
+
+  .steps,
+  .audience-grid,
+  .compare {
+    gap: 0.75rem;
+  }
+
+  /* —— Формы / модалки —— */
+  .modal-dialog {
+    width: min(100% - 1rem, 520px);
+    max-height: calc(100vh - 1.25rem - var(--m-safe-top) - var(--m-safe-bottom));
+    margin: calc(0.6rem + var(--m-safe-top)) auto calc(0.6rem + var(--m-safe-bottom));
+    overflow-y: auto;
+    padding: 1.15rem;
+  }
+
+  .auth-form label,
+  form label {
+    font-size: 0.9rem;
+  }
+
+  .auth-form input,
+  form input,
+  form select,
+  form textarea {
+    min-height: var(--m-touch);
+    font-size: 16px;
+  }
+
+  .form-panel {
+    padding: 1.1rem;
+  }
+
+  .cta-band {
+    padding: 1.5rem 1.1rem;
+  }
+
+  .cta-band .btn-row {
+    flex-direction: column;
+    align-items: stretch;
+    max-width: 300px;
+  }
+
+  .cta-band .btn {
+    width: 100%;
+  }
+
+  .coin-note {
+    padding: 1rem;
+    font-size: 0.9rem;
+  }
+}
+
+@keyframes m-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .nav-links.m-nav-drawer,
+  body > .nav-links {
+    animation: none;
+  }
+}
+
+/* Очень узкие экраны */
+@media (max-width: 360px) {
+  .brand-lockup {
+    font-size: 1.55rem;
+  }
+
+  .hero-content .btn-row,
+  .page-hero .btn-row,
+  .cta-band .btn-row {
+    max-width: none;
+  }
+
+  .faq-item summary {
+    font-size: 0.84rem;
+    padding: 0.65rem 0.75rem;
+  }
+}

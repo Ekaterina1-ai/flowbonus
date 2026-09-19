@@ -1,0 +1,258 @@
+/**
+ * FlowBonus — мобильная версия личного кабинета клиента
+ * Редактируйте этот файл отдельно от cabinet.css.
+ * Активно при ширине ≤ 768px: нижняя панель вкладок, компактный хедер.
+ */
+
+@media (max-width: 768px) {
+  .cabinet-body {
+    padding-bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .cabinet-body .site-header {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .cabinet-nav-top {
+    padding: 0.55rem 0 0.25rem;
+    gap: 0.5rem;
+  }
+
+  .cabinet-nav-top .logo {
+    min-width: 0;
+    font-size: 1rem;
+  }
+
+  .cabinet-nav-top .logo-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .cabinet-nav-top #logout-btn {
+    flex-shrink: 0;
+    padding: 0.45rem 0.75rem;
+    min-height: 40px;
+    font-size: 0.85rem;
+  }
+
+  .cabinet-user-line {
+    margin: 0 0 0.65rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid var(--line);
+    font-size: 0.9rem;
+    font-weight: 650;
+    color: var(--ink);
+    line-height: 1.35;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    max-width: none;
+    word-break: break-word;
+  }
+
+  .cabinet-main {
+    padding: 0.85rem 0 1.25rem;
+  }
+
+  .cabinet-top {
+    margin-bottom: 0.85rem;
+    align-items: center;
+  }
+
+  .cabinet-top .eyebrow {
+    margin: 0;
+    font-size: 0.75rem;
+  }
+
+  .cabinet-top h1 {
+    font-size: 1.25rem;
+    margin: 0.15rem 0 0;
+  }
+
+  .coins-badge {
+    padding: 0.6rem 0.75rem;
+    min-width: 0;
+  }
+
+  .coins-badge span {
+    font-size: 0.7rem;
+  }
+
+  .coins-badge strong,
+  .coins-value-row {
+    font-size: 1rem;
+  }
+
+  .cabinet-tabs {
+    display: none !important;
+  }
+
+  .cabinet-panel {
+    padding: 0.95rem;
+    border-radius: 12px;
+    animation: m-panel-in 0.28s var(--ease);
+  }
+
+  .section-head h2 {
+    font-size: 1.2rem;
+    margin: 0 0 0.3rem;
+  }
+
+  .section-head p {
+    font-size: 0.88rem;
+  }
+
+  .partners-city-bar {
+    max-width: none;
+    margin-bottom: 1rem;
+  }
+
+  .select-search-trigger {
+    min-height: 44px;
+  }
+
+  .partners-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .partner-card {
+    border-radius: 14px;
+  }
+
+  .partner-visual {
+    height: min(58vw, 280px);
+    min-height: 220px;
+  }
+
+  .partner-visual-copy {
+    left: 0.85rem;
+    right: 0.85rem;
+    bottom: 1.45rem;
+  }
+
+  .partner-visual-copy h3 {
+    font-size: 1.2rem;
+  }
+
+  .partner-card-body {
+    padding: 0.9rem 0.95rem 1rem;
+  }
+
+  .partner-limit-box {
+    min-width: 88px;
+  }
+
+  .btn-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-row .btn {
+    width: 100%;
+  }
+
+  .pay-icons {
+    gap: 0.55rem;
+  }
+
+  .pay-icon-tab {
+    min-height: 72px;
+  }
+
+  .wallet-card {
+    padding: 1.1rem;
+  }
+
+  .m-tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    gap: 0.15rem;
+    padding: 0.4rem 0.45rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    background: rgba(247, 245, 240, 0.94);
+    backdrop-filter: blur(16px);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -8px 24px rgba(18, 18, 18, 0.06);
+  }
+
+  .m-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    min-height: 52px;
+    padding: 0.35rem 0.25rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    transition: color 0.2s var(--ease), background 0.2s var(--ease), transform 0.2s var(--ease);
+  }
+
+  .m-tab-icon {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+  }
+
+  .m-tab-icon svg {
+    width: 22px;
+    height: 22px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .m-tab.is-active {
+    color: var(--gold-deep);
+    background: rgba(198, 160, 58, 0.14);
+  }
+
+  .m-tab:active {
+    transform: scale(0.96);
+  }
+
+  .m-tab-label {
+    line-height: 1.1;
+    text-align: center;
+  }
+}
+
+@media (min-width: 769px) {
+  .m-tabbar {
+    display: none !important;
+  }
+}
+
+@keyframes m-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .cabinet-panel {
+    animation: none;
+  }
+}

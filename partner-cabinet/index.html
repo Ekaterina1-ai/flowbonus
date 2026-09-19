@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Кабинет партнёра — FlowBonus</title>
+  <link rel="icon" href="/assets/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/assets/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/cabinet/css/cabinet.css" />
+  <link rel="stylesheet" href="/partner-cabinet/css/partner.css" />
+  <link rel="stylesheet" href="/partner-cabinet/css/mobile.css" />
+</head>
+<body class="cabinet-body">
+  <header class="site-header cabinet-header">
+    <div class="container">
+      <div class="nav cabinet-nav-top">
+        <a class="logo" href="/">
+          <img class="logo-mark" src="/flowbonus-hero.png" alt="" />
+          Flow<span>Bonus</span>
+        </a>
+        <button class="btn btn-ghost" type="button" id="logout-btn">Выйти</button>
+      </div>
+      <p class="cabinet-user-line" id="partner-name">—</p>
+    </div>
+  </header>
+
+  <main class="container cabinet-main">
+    <div class="cabinet-top reveal is-visible">
+      <div>
+        <p class="eyebrow">Кабинет партнёра</p>
+        <h1 id="business-title">Ваша точка</h1>
+      </div>
+      <div class="coins-badge">
+        <span>Списано всего</span>
+        <strong class="coins-value-row">
+          <em id="stats-coins">0</em>
+          <img class="coin-icon" src="/assets/coin.svg" alt="монета" />
+        </strong>
+      </div>
+    </div>
+
+    <nav class="cabinet-tabs" aria-label="Разделы кабинета партнёра">
+      <button class="cabinet-tab is-active" type="button" data-tab="scan">Сканер QR</button>
+      <button class="cabinet-tab" type="button" data-tab="offer">Условия акции</button>
+      <button class="cabinet-tab" type="button" data-tab="stats">Статистика</button>
+      <button class="cabinet-tab" type="button" data-tab="profile">Профиль</button>
+    </nav>
+
+    <section class="cabinet-panel is-active" id="tab-scan">
+      <div class="section-head">
+        <h2>Списание монет клиента</h2>
+        <p>Включите камеру и отсканируйте QR из кабинета клиента. После подтверждения монеты спишутся с его счёта.</p>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-gold" type="button" id="start-scan-btn">Включить камеру</button>
+        <button class="btn btn-ghost" type="button" id="stop-scan-btn" hidden>Остановить</button>
+      </div>
+      <p class="form-note" id="scan-status"></p>
+
+      <div class="scan-box" id="scan-box" hidden>
+        <div id="qr-reader"></div>
+      </div>
+
+      <div class="redeem-card" id="redeem-card" hidden>
+        <h3>Подтверждение списания</h3>
+        <p>Клиент: <strong id="redeem-fio">—</strong></p>
+        <p>Телефон: <span id="redeem-phone">—</span></p>
+        <p>Баланс клиента: <strong id="redeem-balance">0</strong>
+          <img class="coin-icon coin-icon-sm" src="/assets/coin.svg" alt="" />
+        </p>
+        <label>
+          Списать монет
+          <input type="number" id="redeem-coins" min="1" max="50" value="2" />
+        </label>
+        <div class="btn-row" style="margin-top: 0.85rem;">
+          <button class="btn btn-gold" type="button" id="confirm-redeem-btn">Подтвердить списание</button>
+          <button class="btn btn-ghost" type="button" id="cancel-redeem-btn">Отмена</button>
+        </div>
+        <p class="form-note" id="redeem-status"></p>
+      </div>
+    </section>
+
+    <section class="cabinet-panel" id="tab-offer">
+      <div class="section-head">
+        <h2>Условия акции</h2>
+        <p>Сколько монет клиент может потратить у вас за визит. Это число видно в его кабинете на карточке партнёра.</p>
+      </div>
+      <form class="pay-form" id="offer-form">
+        <label>
+          Монет за визит
+          <input type="number" id="offer-spend-coins" min="1" max="50" value="2" required />
+        </label>
+        <button class="btn btn-gold" type="submit">Сохранить</button>
+        <p class="form-note" id="offer-status"></p>
+      </form>
+    </section>
+
+    <section class="cabinet-panel" id="tab-stats">
+      <div class="section-head">
+        <h2>Статистика</h2>
+        <p>Операции списания по вашему QR-сканеру.</p>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span>Операций</span>
+          <strong id="stats-ops">0</strong>
+        </div>
+        <div class="stat-card">
+          <span>Монет списано</span>
+          <strong id="stats-coins-2">0</strong>
+        </div>
+      </div>
+      <div class="recent-list" id="recent-list"></div>
+    </section>
+
+    <section class="cabinet-panel" id="tab-profile">
+      <div class="section-head">
+        <h2>Профиль точки</h2>
+        <p>Эти данные видят клиенты в своём кабинете: карточка, сайт, описание и галерея.</p>
+      </div>
+      <form class="pay-form profile-wide" id="profile-form">
+        <label>
+          Название
+          <input type="text" id="profile-business" placeholder="Торговое название" required />
+        </label>
+        <label>
+          Сфера / ниша
+          <select id="profile-category" required>
+            <option value="">Выберите сферу</option>
+            <option>Салон красоты</option>
+            <option>Парикмахерская</option>
+            <option>Ногтевой сервис</option>
+            <option>Косметология</option>
+            <option>SPA и массаж</option>
+            <option>Барбершоп</option>
+            <option>Ресторан</option>
+            <option>Кафе</option>
+            <option>Бар / паб</option>
+            <option>Кальянная</option>
+            <option>Суши / роллы</option>
+            <option>Пекарня / кондитерская</option>
+            <option>Фитнес / спортзал</option>
+            <option>Йога / пилатес</option>
+            <option>Бассейн</option>
+            <option>Баня / сауна</option>
+            <option>Автосервис</option>
+            <option>Автомойка</option>
+            <option>Шиномонтаж</option>
+            <option>Детейлинг</option>
+            <option>Стоматология</option>
+            <option>Медицинский центр</option>
+            <option>Аптека</option>
+            <option>Ветеринария</option>
+            <option>Магазин одежды</option>
+            <option>Магазин продуктов</option>
+            <option>Цветы</option>
+            <option>Зоотовары</option>
+            <option>Детский центр</option>
+            <option>Образование / курсы</option>
+            <option>Развлечения</option>
+            <option>Клуб / караоке</option>
+            <option>Кино / боулинг</option>
+            <option>Гостиница / хостел</option>
+            <option>Фотостудия</option>
+            <option>Клининг</option>
+            <option>Ремонт техники</option>
+            <option>Ателье / химчистка</option>
+            <option>Другое</option>
+          </select>
+        </label>
+
+        <div class="select-search" id="city-select-search" data-select-search>
+          <span class="select-search-label">Город</span>
+          <button type="button" class="select-search-trigger" id="city-select-trigger" aria-expanded="false">
+            <span id="profile-city-value">Не выбран</span>
+            <span class="select-search-arrow" aria-hidden="true">▾</span>
+          </button>
+          <div class="select-search-panel" id="city-select-panel" hidden>
+            <input type="search" id="profile-city-search" class="select-search-input" placeholder="Поиск города..." autocomplete="off" />
+            <div class="select-search-list" id="profile-city-list" role="listbox" aria-label="Список городов"></div>
+          </div>
+          <input type="hidden" id="profile-city" value="" />
+        </div>
+        <label>
+          Адрес
+          <input type="text" id="profile-address" placeholder="Улица, дом" />
+        </label>
+        <label>
+          Режим работы
+          <input type="text" id="profile-hours" placeholder="Пн–Вс: 10:00–21:00" />
+        </label>
+        <label>
+          Сайт
+          <input type="url" id="profile-website" placeholder="https://..." />
+        </label>
+        <label>
+          Описание для клиентов
+          <textarea id="profile-description" rows="4" placeholder="Коротко расскажите о точке и услугах"></textarea>
+        </label>
+        <label>
+          Внутренний комментарий / акции
+          <textarea id="profile-comment" rows="2" placeholder="Заметки для себя (не обязательно на карточке)"></textarea>
+        </label>
+        <button class="btn btn-gold" type="submit">Сохранить профиль</button>
+        <p class="form-note" id="profile-status"></p>
+      </form>
+
+      <div class="gallery-block">
+        <h3>Галерея фото</h3>
+        <p class="form-note">Фото появятся каруселью в кабинете клиента. Можно загрузить несколько изображений.</p>
+        <div class="gallery-grid" id="gallery-grid"></div>
+        <label class="gallery-upload btn btn-ghost">
+          Добавить фото
+          <input type="file" id="gallery-input" accept="image/*" hidden />
+        </label>
+        <p class="form-note" id="gallery-status"></p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="m-tabbar" id="m-tabbar" aria-label="Мобильная навигация партнёра">
+    <button type="button" class="m-tab is-active" data-tab="scan">
+      <span class="m-tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
+      </span>
+      <span class="m-tab-label">Сканер</span>
+    </button>
+    <button type="button" class="m-tab" data-tab="offer">
+      <span class="m-tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M7 7.5c0-1.9 2.2-3 5-3s5 1.1 5 3-2.2 3-5 3-5 1.1-5 3 2.2 3 5 3 5-1.1 5-3"/></svg>
+      </span>
+      <span class="m-tab-label">Акция</span>
+    </button>
+    <button type="button" class="m-tab" data-tab="stats">
+      <span class="m-tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 16v-5M12 16V8M16 16v-3"/></svg>
+      </span>
+      <span class="m-tab-label">Статистика</span>
+    </button>
+    <button type="button" class="m-tab" data-tab="profile">
+      <span class="m-tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.2"/><path d="M5.5 19c1.4-3 3.7-4.5 6.5-4.5S17.1 16 18.5 19"/></svg>
+      </span>
+      <span class="m-tab-label">Профиль</span>
+    </button>
+  </nav>
+
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="/partner-cabinet/js/partner.js"></script>
+  <script src="/partner-cabinet/js/mobile.js"></script>
+</body>
+</html>
