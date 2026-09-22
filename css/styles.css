@@ -959,6 +959,343 @@ body.modal-open {
   color: var(--gold-deep);
 }
 
+/* Network showcase on landing */
+.network-head {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+  max-width: none;
+  width: 100%;
+}
+
+.network-head-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  width: 100%;
+}
+
+.network-head-row h2 {
+  margin: 0;
+}
+
+.network-lead {
+  margin: 0;
+  max-width: 36rem;
+  color: var(--muted);
+  font-size: 1.02rem;
+  line-height: 1.5;
+}
+
+.network-stat-tile {
+  position: relative;
+  width: 5.4rem;
+  height: 5.4rem;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid rgba(198, 160, 58, 0.38);
+  border-radius: 16px;
+  overflow: hidden;
+  isolation: isolate;
+  background: #f4f1ea;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(18, 18, 18, 0.06);
+  --wipe-x: 50%;
+  --wipe-y: 50%;
+  --wipe-size: 18px;
+}
+
+.network-stat-tile:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.network-stat-reveal {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(224, 191, 90, 0.35), transparent 55%),
+    linear-gradient(155deg, #171717 0%, #2a2110 55%, #121212 100%);
+  color: #fff;
+}
+
+.network-stat-reveal strong {
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--gold-bright);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+}
+
+.network-stat-caption {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.network-stat-wipe {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72), rgba(247, 245, 240, 0.96)),
+    #f7f5f0;
+  -webkit-mask-image: radial-gradient(
+    circle var(--wipe-size) at var(--wipe-x) var(--wipe-y),
+    transparent 0%,
+    transparent 55%,
+    #000 74%
+  );
+  mask-image: radial-gradient(
+    circle var(--wipe-size) at var(--wipe-x) var(--wipe-y),
+    transparent 0%,
+    transparent 55%,
+    #000 74%
+  );
+}
+
+.network-stat-cover-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.network-stat-tile.is-open .network-stat-cover-label {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.network-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 1rem;
+  margin-top: 0.85rem;
+}
+
+.network-grid.is-single {
+  grid-template-columns: min(100%, 380px);
+}
+
+.network-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 10px 28px rgba(18, 18, 18, 0.05);
+}
+
+.network-visual {
+  position: relative;
+  height: 188px;
+  background: #1a1a1a;
+}
+
+.network-visual::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 42%;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(10, 10, 10, 0.55));
+}
+
+.network-carousel-track {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.network-carousel-track img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+}
+
+.network-carousel-track img.is-active {
+  display: block;
+}
+
+.network-carousel-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.network-carousel-btn.prev {
+  left: 0.65rem;
+}
+
+.network-carousel-btn.next {
+  right: 0.65rem;
+}
+
+.network-carousel-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2.35rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  z-index: 3;
+}
+
+.network-carousel-dots button {
+  width: 0.45rem;
+  height: 0.45rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+
+.network-carousel-dots button.is-active {
+  background: #fff;
+  width: 0.85rem;
+}
+
+.network-chip {
+  position: absolute;
+  bottom: 0.7rem;
+  z-index: 3;
+  max-width: calc(50% - 1rem);
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.network-chip-category {
+  left: 0.7rem;
+}
+
+.network-chip-city {
+  right: 0.7rem;
+}
+
+.network-body {
+  padding: 0.85rem 0.95rem 1rem;
+}
+
+.network-body h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  font-size: 1.18rem;
+  letter-spacing: -0.02em;
+}
+
+.network-desc {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.network-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.85rem 0 0.8rem;
+  color: rgba(18, 18, 18, 0.55);
+}
+
+.network-divider-line {
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.network-divider-ornament {
+  width: 2.85rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+  display: block;
+}
+
+.network-spend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.network-spend-label {
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.network-spend-value {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.32rem 0.58rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(224, 191, 90, 0.45), rgba(198, 160, 58, 0.18));
+  border: 1px solid rgba(198, 160, 58, 0.4);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+.network-spend-value img {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.empty-state {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: 0.98rem;
+}
+
 .form-consent {
   display: flex;
   gap: 0.7rem;

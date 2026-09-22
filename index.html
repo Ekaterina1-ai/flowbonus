@@ -26,6 +26,7 @@
         <li><a class="is-active" href="index.html">Главная</a></li>
         <li><a href="clients.html">Клиентам</a></li>
         <li><a href="partners.html">Стать партнером</a></li>
+        <li><a href="#network">Сеть</a></li>
         <li><a href="index.html#faq">FAQ</a></li>
         <li><a class="btn btn-ghost" href="#" data-open-modal="client-login">Войти</a></li>
         <li><a class="btn btn-primary" href="clients.html#start">Начать</a></li>
@@ -127,6 +128,35 @@
           <strong>Монета FlowBonus</strong>
           Это внутренняя валюта приложения. Пополняете кошелёк в любой момент, покупаете монеты и оплачиваете ими вторую услугу, товар или визит той же стоимости у партнёра сети.
         </div>
+      </div>
+    </section>
+
+    <section id="network">
+      <div class="container">
+        <div class="section-head reveal network-head">
+          <div class="network-head-row">
+            <h2 id="network-title">Уже с нами</h2>
+            <button
+              type="button"
+              class="network-stat-tile"
+              id="network-stat"
+              hidden
+              data-network-wipe
+              aria-label="Клиентов в FlowBonus: 0"
+            >
+              <span class="network-stat-reveal">
+                <strong id="network-clients">0</strong>
+                <span class="network-stat-caption" id="network-clients-word">клиентов</span>
+              </span>
+              <span class="network-stat-wipe" aria-hidden="true">
+                <span class="network-stat-cover-label">клиенты</span>
+              </span>
+            </button>
+          </div>
+          <p id="network-lead" class="network-lead">Скоро добавятся новые точки в вашем городе!</p>
+        </div>
+        <div class="network-grid" id="network-grid" aria-live="polite"></div>
+        <p class="empty-state" id="network-empty" hidden>Партнёры скоро появятся — следите за обновлениями.</p>
       </div>
     </section>
 

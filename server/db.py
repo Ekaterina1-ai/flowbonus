@@ -562,11 +562,21 @@ def list_partners_public(city: str | None = None) -> list[dict]:
     with get_connection() as conn:
         if city:
             rows = conn.execute(
-                "SELECT * FROM partners WHERE city = ? ORDER BY id ASC",
+                """
+                SELECT * FROM partners
+                WHERE city = ? AND COALESCE(is_blocked, 0) = 0
+                ORDER BY id ASC
+                """,
                 (city,),
             ).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM partners ORDER BY id ASC").fetchall()
+            rows = conn.execute(
+                """
+                SELECT * FROM partners
+                WHERE COALESCE(is_blocked, 0) = 0
+                ORDER BY id ASC
+                """
+            ).fetchall()
     result = []
     for row in rows:
         images = list_partner_images(row["id"])
@@ -589,6 +599,20 @@ def list_partners_public(city: str | None = None) -> list[dict]:
             }
         )
     return result
+
+
+def public_landing_snapshot() -> dict:
+    """Данные для блока «Уже с нами» на лендинге — из живой базы."""
+    partners = list_partners_public()
+    with get_connection() as conn:
+        clients_count = int(
+            conn.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"] or 0
+        )
+    return {
+        "clients_count": clients_count,
+        "partners_count": len(partners),
+        "partners": partners,
+    }
 
 
 def create_partner(

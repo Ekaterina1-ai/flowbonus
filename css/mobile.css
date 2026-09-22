@@ -351,6 +351,79 @@
     padding: 1rem;
     font-size: 0.9rem;
   }
+
+  .network-head {
+    gap: 0.45rem;
+  }
+
+  .network-head-row {
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: nowrap;
+  }
+
+  .network-head-row h2 {
+    font-size: clamp(1.55rem, 7vw, 1.9rem);
+  }
+
+  .network-stat-tile {
+    width: 4.6rem;
+    height: 4.6rem;
+    border-radius: 14px;
+  }
+
+  .network-stat-reveal strong {
+    font-size: 1.3rem;
+  }
+
+  .network-stat-caption,
+  .network-stat-cover-label {
+    font-size: 0.58rem;
+  }
+
+  .network-lead {
+    font-size: 0.95rem;
+  }
+
+  .network-visual {
+    height: 168px;
+  }
+
+  .network-chip {
+    max-width: calc(50% - 0.7rem);
+    font-size: 0.64rem;
+    padding: 0.22rem 0.5rem;
+    bottom: 0.5rem;
+  }
+
+  .network-carousel-dots {
+    bottom: 2.05rem;
+  }
+
+  .network-body h3 {
+    font-size: 1.08rem;
+  }
+
+  .network-desc {
+    font-size: 0.84rem;
+  }
+
+  .network-divider-ornament {
+    width: 2.5rem;
+  }
+
+  .network-spend {
+    gap: 0.55rem;
+  }
+
+  .network-spend-label {
+    font-size: 0.8rem;
+  }
+
+  .network-spend-value {
+    font-size: 0.98rem;
+    padding: 0.3rem 0.52rem;
+  }
 }
 
 @keyframes m-sheet-in {

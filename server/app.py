@@ -46,6 +46,7 @@ from db import (
     partner_is_blocked,
     partner_public,
     partner_stats,
+    public_landing_snapshot,
     record_consents,
     redeem_promo,
     redeem_spend_token,
@@ -373,6 +374,12 @@ def api_partners():
     city = (request.args.get("city") or "").strip() or None
     partners = list_partners_public(city)
     return jsonify({"partners": partners})
+
+
+@app.get("/api/landing")
+def api_landing():
+    """Публичные данные для главной: партнёры и число клиентов из БД."""
+    return jsonify({"ok": True, **public_landing_snapshot()})
 
 
 @app.get("/api/me")
