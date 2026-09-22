@@ -65,7 +65,9 @@ def init_db() -> None:
                 coins INTEGER NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1,
                 max_uses INTEGER,
-                used_count INTEGER NOT NULL DEFAULT 0
+                used_count INTEGER NOT NULL DEFAULT 0,
+                comment TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS promo_redemptions (
@@ -113,6 +115,36 @@ def init_db() -> None:
                 FOREIGN KEY (partner_id) REFERENCES partners(id)
             );
 
+            CREATE TABLE IF NOT EXISTS admins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                login TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS coin_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                admin_id INTEGER,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (client_id) REFERENCES clients(id),
+                FOREIGN KEY (admin_id) REFERENCES admins(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS admin_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL DEFAULT '',
+                target_id TEXT NOT NULL DEFAULT '',
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (admin_id) REFERENCES admins(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_coin_orders_client ON coin_orders(client_id);
             CREATE INDEX IF NOT EXISTS idx_spend_tokens_client ON spend_tokens(client_id);
             CREATE INDEX IF NOT EXISTS idx_spend_tokens_expires ON spend_tokens(expires_at);
@@ -121,6 +153,10 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_partner ON partner_spend_ops(partner_id);
             CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_client ON partner_spend_ops(client_id);
             CREATE INDEX IF NOT EXISTS idx_partner_images_partner ON partner_images(partner_id, sort_order);
+            CREATE INDEX IF NOT EXISTS idx_coin_ledger_client ON coin_ledger(client_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
+            CREATE INDEX IF NOT EXISTS idx_coin_orders_created ON coin_orders(created_at);
+            CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_created ON partner_spend_ops(created_at);
             """
         )
         # миграция колонок профиля партнёра
@@ -129,9 +165,29 @@ def init_db() -> None:
             ("website", "TEXT NOT NULL DEFAULT ''"),
             ("description", "TEXT NOT NULL DEFAULT ''"),
             ("hours", "TEXT NOT NULL DEFAULT ''"),
+            ("is_blocked", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if col not in partner_cols:
                 conn.execute(f"ALTER TABLE partners ADD COLUMN {col} {ddl}")
+
+        client_cols = {row[1] for row in conn.execute("PRAGMA table_info(clients)").fetchall()}
+        if "is_blocked" not in client_cols:
+            conn.execute(
+                "ALTER TABLE clients ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0"
+            )
+
+        promo_cols = {row[1] for row in conn.execute("PRAGMA table_info(promo_codes)").fetchall()}
+        if "comment" not in promo_cols:
+            conn.execute(
+                "ALTER TABLE promo_codes ADD COLUMN comment TEXT NOT NULL DEFAULT ''"
+            )
+        if "created_at" not in promo_cols:
+            # SQLite не позволяет non-constant default в ALTER TABLE
+            conn.execute("ALTER TABLE promo_codes ADD COLUMN created_at TEXT")
+            conn.execute(
+                "UPDATE promo_codes SET created_at = datetime('now') WHERE created_at IS NULL"
+            )
+
         # демо-промокоды
         conn.execute(
             """
@@ -224,6 +280,13 @@ def add_coins(client_id: int, coins: int, amount_rub: int, card_last4: str) -> i
             """,
             (client_id, amount_rub, coins, card_last4),
         )
+        conn.execute(
+            """
+            INSERT INTO coin_ledger (client_id, delta, source, note)
+            VALUES (?, ?, 'purchase', ?)
+            """,
+            (client_id, coins, f"Покупка на {amount_rub} ₽"),
+        )
         conn.commit()
         row = conn.execute("SELECT coins FROM clients WHERE id = ?", (client_id,)).fetchone()
         return int(row["coins"])
@@ -238,7 +301,20 @@ def client_public(row: sqlite3.Row) -> dict:
         "city": row["city"],
         "selected_city": row["selected_city"] or row["city"],
         "coins": row["coins"],
+        "is_blocked": bool(_row_get(row, "is_blocked", 0)),
     }
+
+
+def client_is_blocked(row: sqlite3.Row | None) -> bool:
+    if not row:
+        return False
+    return bool(_row_get(row, "is_blocked", 0))
+
+
+def partner_is_blocked(row: sqlite3.Row | None) -> bool:
+    if not row:
+        return False
+    return bool(_row_get(row, "is_blocked", 0))
 
 
 def redeem_promo(client_id: int, code: str) -> dict:
@@ -251,8 +327,10 @@ def redeem_promo(client_id: int, code: str) -> dict:
             "SELECT * FROM promo_codes WHERE code = ?",
             (code_norm,),
         ).fetchone()
-        if not promo or not promo["active"]:
-            raise ValueError("Промокод не найден или неактивен.")
+        if not promo:
+            raise ValueError("Промокод недействителен.")
+        if not promo["active"]:
+            raise ValueError("Промокод уже не действует.")
 
         already = conn.execute(
             "SELECT id FROM promo_redemptions WHERE client_id = ? AND code = ?",
@@ -279,6 +357,13 @@ def redeem_promo(client_id: int, code: str) -> dict:
             VALUES (?, ?, ?)
             """,
             (client_id, code_norm, coins),
+        )
+        conn.execute(
+            """
+            INSERT INTO coin_ledger (client_id, delta, source, note)
+            VALUES (?, ?, 'promo', ?)
+            """,
+            (client_id, coins, f"Промокод {code_norm}"),
         )
         conn.commit()
         balance = conn.execute(
@@ -638,10 +723,17 @@ def redeem_spend_token(*, partner_id: int, token: str, coins: int) -> dict:
             """,
             (partner_id, info["client_id"], token, coins),
         )
+        conn.execute(
+            """
+            INSERT INTO coin_ledger (client_id, delta, source, note)
+            VALUES (?, ?, 'spend', ?)
+            """,
+            (info["client_id"], -coins, f"Списание у партнёра #{partner_id}"),
+        )
         conn.commit()
         balance = conn.execute(
             "SELECT coins FROM clients WHERE id = ?",
-            (info["client_id"],),
+            (info["client_id"],)
         ).fetchone()["coins"]
 
     return {
@@ -650,3 +742,713 @@ def redeem_spend_token(*, partner_id: int, token: str, coins: int) -> dict:
         "client_balance": int(balance),
         "client_fio": info["client_fio"],
     }
+
+
+# ---------- Admin ----------
+
+def admin_count() -> int:
+    with get_connection() as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM admins").fetchone()
+    return int(row["c"] or 0)
+
+
+def get_admin_by_id(admin_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        return conn.execute("SELECT * FROM admins WHERE id = ?", (admin_id,)).fetchone()
+
+
+def get_admin_by_login(login: str) -> sqlite3.Row | None:
+    login_norm = login.strip().lower()
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM admins WHERE lower(login) = ?",
+            (login_norm,),
+        ).fetchone()
+
+
+def bootstrap_or_verify_admin(login: str, password: str) -> sqlite3.Row:
+    """Первый вход создаёт единственного админа; далее — только проверка."""
+    login_clean = login.strip()
+    if not login_clean or len(login_clean) < 3:
+        raise ValueError("Логин: минимум 3 символа.")
+    if not password or len(password) < 6:
+        raise ValueError("Пароль: минимум 6 символов.")
+
+    with get_connection() as conn:
+        count = int(conn.execute("SELECT COUNT(*) AS c FROM admins").fetchone()["c"] or 0)
+        if count == 0:
+            password_hash = generate_password_hash(password)
+            cur = conn.execute(
+                """
+                INSERT INTO admins (login, password_hash)
+                VALUES (?, ?)
+                """,
+                (login_clean, password_hash),
+            )
+            conn.commit()
+            return conn.execute(
+                "SELECT * FROM admins WHERE id = ?", (cur.lastrowid,)
+            ).fetchone()
+
+        admin = conn.execute(
+            "SELECT * FROM admins WHERE lower(login) = ?",
+            (login_clean.lower(),),
+        ).fetchone()
+        if not admin or not check_password_hash(admin["password_hash"], password):
+            raise ValueError("Неверный логин или пароль.")
+        return admin
+
+
+def admin_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "login": row["login"],
+        "created_at": row["created_at"],
+    }
+
+
+def _insert_admin_audit(
+    conn: sqlite3.Connection,
+    admin_id: int,
+    action: str,
+    *,
+    target_type: str = "",
+    target_id: str = "",
+    detail: str = "",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO admin_audit_log
+          (admin_id, action, target_type, target_id, detail, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        """,
+        (admin_id, action, target_type, str(target_id), detail),
+    )
+
+
+def write_admin_audit(
+    admin_id: int,
+    action: str,
+    *,
+    target_type: str = "",
+    target_id: str = "",
+    detail: str = "",
+) -> None:
+    with get_connection() as conn:
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            action,
+            target_type=target_type,
+            target_id=target_id,
+            detail=detail,
+        )
+        conn.commit()
+
+
+AUDIT_ACTION_LABELS = {
+    "block": "Блокировка",
+    "unblock": "Разблокировка",
+    "reset_password": "Сброс пароля",
+    "add_coins": "Начисление монет",
+    "create_promo": "Создание промокода",
+    "close_promo": "Закрытие промокода",
+    "open_promo": "Открытие промокода",
+}
+
+
+def _audit_target_label(
+    conn: sqlite3.Connection, target_type: str, target_id: str
+) -> str:
+    tid = (target_id or "").strip()
+    ttype = (target_type or "").strip().lower()
+    if ttype == "client" and tid.isdigit():
+        row = conn.execute(
+            "SELECT fio FROM clients WHERE id = ?", (int(tid),)
+        ).fetchone()
+        if row:
+            return f"Клиент: {row['fio']}"
+        return f"Клиент #{tid}"
+    if ttype == "partner" and tid.isdigit():
+        row = conn.execute(
+            "SELECT business_name FROM partners WHERE id = ?", (int(tid),)
+        ).fetchone()
+        if row:
+            return f"Партнёр: {row['business_name']}"
+        return f"Партнёр #{tid}"
+    if ttype == "promo" and tid:
+        return f"Промокод: {tid}"
+    if ttype and tid:
+        return f"{ttype} {tid}"
+    return tid or "—"
+
+
+def list_admin_audit(limit: int = 50) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.*, ad.login AS admin_login
+            FROM admin_audit_log a
+            JOIN admins ad ON ad.id = a.admin_id
+            ORDER BY a.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(200, int(limit))),),
+        ).fetchall()
+        items = []
+        for r in rows:
+            items.append(
+                {
+                    "id": r["id"],
+                    "admin_id": r["admin_id"],
+                    "admin_login": r["admin_login"],
+                    "action": r["action"],
+                    "action_label": AUDIT_ACTION_LABELS.get(r["action"], r["action"]),
+                    "target_type": r["target_type"],
+                    "target_id": r["target_id"],
+                    "target_label": _audit_target_label(
+                        conn, r["target_type"], r["target_id"]
+                    ),
+                    "detail": r["detail"],
+                    "created_at": r["created_at"],
+                }
+            )
+    return items
+
+
+def list_clients_admin() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, fio, phone, email, city, selected_city, coins,
+                   COALESCE(is_blocked, 0) AS is_blocked, created_at
+            FROM clients
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "fio": r["fio"],
+            "phone": r["phone"],
+            "email": r["email"],
+            "city": r["city"],
+            "selected_city": r["selected_city"] or r["city"],
+            "coins": int(r["coins"] or 0),
+            "is_blocked": bool(r["is_blocked"]),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def get_client_admin_detail(client_id: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, fio, phone, email, city, selected_city, coins,
+                   COALESCE(is_blocked, 0) AS is_blocked, created_at
+            FROM clients WHERE id = ?
+            """,
+            (client_id,),
+        ).fetchone()
+        if not row:
+            return None
+        ledger = conn.execute(
+            """
+            SELECT id, delta, source, note, created_at, admin_id
+            FROM coin_ledger
+            WHERE client_id = ?
+            ORDER BY id DESC
+            LIMIT 100
+            """,
+            (client_id,),
+        ).fetchall()
+        purchases = conn.execute(
+            """
+            SELECT id, amount, coins_added, created_at
+            FROM coin_orders
+            WHERE client_id = ?
+            ORDER BY id DESC
+            LIMIT 50
+            """,
+            (client_id,),
+        ).fetchall()
+        promos = conn.execute(
+            """
+            SELECT code, coins, created_at
+            FROM promo_redemptions
+            WHERE client_id = ?
+            ORDER BY id DESC
+            """,
+            (client_id,),
+        ).fetchall()
+    return {
+        "id": row["id"],
+        "fio": row["fio"],
+        "phone": row["phone"],
+        "email": row["email"],
+        "city": row["city"],
+        "selected_city": row["selected_city"] or row["city"],
+        "coins": int(row["coins"] or 0),
+        "is_blocked": bool(row["is_blocked"]),
+        "created_at": row["created_at"],
+        "ledger": [
+            {
+                "id": r["id"],
+                "delta": int(r["delta"]),
+                "source": r["source"],
+                "note": r["note"] or "",
+                "created_at": r["created_at"],
+                "admin_id": r["admin_id"],
+            }
+            for r in ledger
+        ],
+        "purchases": [
+            {
+                "id": r["id"],
+                "amount": int(r["amount"]),
+                "coins_added": int(r["coins_added"]),
+                "created_at": r["created_at"],
+            }
+            for r in purchases
+        ],
+        "promos": [
+            {
+                "code": r["code"],
+                "coins": int(r["coins"]),
+                "created_at": r["created_at"],
+            }
+            for r in promos
+        ],
+    }
+
+
+def admin_add_client_coins(
+    *,
+    admin_id: int,
+    client_id: int,
+    coins: int,
+    note: str = "",
+) -> int:
+    coins = int(coins)
+    if coins < 1 or coins > 10000:
+        raise ValueError("Можно начислить от 1 до 10000 монет.")
+    note_clean = (note or "").strip()
+    if len(note_clean) < 3:
+        raise ValueError("Укажите причину начисления на русском языке (минимум 3 символа).")
+    with get_connection() as conn:
+        client = conn.execute(
+            "SELECT id, coins FROM clients WHERE id = ?", (client_id,)
+        ).fetchone()
+        if not client:
+            raise ValueError("Клиент не найден.")
+        conn.execute(
+            "UPDATE clients SET coins = coins + ? WHERE id = ?",
+            (coins, client_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO coin_ledger (client_id, delta, source, admin_id, note)
+            VALUES (?, ?, 'admin', ?, ?)
+            """,
+            (client_id, coins, admin_id, note_clean),
+        )
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            "add_coins",
+            target_type="client",
+            target_id=str(client_id),
+            detail=f"+{coins} монет. {note_clean}",
+        )
+        conn.commit()
+        return int(
+            conn.execute(
+                "SELECT coins FROM clients WHERE id = ?", (client_id,)
+            ).fetchone()["coins"]
+        )
+
+
+def generate_user_password(length: int = 8) -> str:
+    """Пароль из букв и цифр — подходит под правила входа клиента/партнёра."""
+    import secrets
+    import string
+
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(max(6, length)))
+
+
+def admin_reset_client_password(admin_id: int, client_id: int) -> str:
+    """Генерирует новый пароль, сохраняет хеш, возвращает пароль для передачи клиенту."""
+    password = generate_user_password()
+    password_hash = generate_password_hash(password)
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE clients SET password_hash = ? WHERE id = ?",
+            (password_hash, client_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Клиент не найден.")
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            "reset_password",
+            target_type="client",
+            target_id=str(client_id),
+            detail="Пароль сброшен (сгенерирован системой)",
+        )
+        conn.commit()
+    return password
+
+
+def admin_set_client_blocked(admin_id: int, client_id: int, blocked: bool) -> None:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE clients SET is_blocked = ? WHERE id = ?",
+            (1 if blocked else 0, client_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Клиент не найден.")
+        action = "block" if blocked else "unblock"
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            action,
+            target_type="client",
+            target_id=str(client_id),
+            detail="Доступ заблокирован" if blocked else "Доступ восстановлен",
+        )
+        conn.commit()
+
+
+def list_partners_admin() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, business_name, category, contact_name, phone, city, address,
+                   comment, spend_coins, COALESCE(is_blocked, 0) AS is_blocked, created_at,
+                   website, description, hours
+            FROM partners
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "business_name": r["business_name"],
+            "category": r["category"],
+            "contact_name": r["contact_name"],
+            "phone": r["phone"],
+            "city": r["city"] or "",
+            "address": r["address"] or "",
+            "comment": r["comment"] or "",
+            "website": _row_get(r, "website", ""),
+            "description": _row_get(r, "description", ""),
+            "hours": _row_get(r, "hours", ""),
+            "spend_coins": int(r["spend_coins"] or 2),
+            "is_blocked": bool(r["is_blocked"]),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def get_partner_admin_detail(partner_id: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM partners WHERE id = ?", (partner_id,)).fetchone()
+        if not row:
+            return None
+        stats = partner_stats(partner_id)
+    return {
+        **{
+            "id": row["id"],
+            "business_name": row["business_name"],
+            "category": row["category"],
+            "contact_name": row["contact_name"],
+            "phone": row["phone"],
+            "city": row["city"] or "",
+            "address": row["address"] or "",
+            "comment": row["comment"] or "",
+            "website": _row_get(row, "website", ""),
+            "description": _row_get(row, "description", ""),
+            "hours": _row_get(row, "hours", ""),
+            "spend_coins": int(row["spend_coins"] or 2),
+            "is_blocked": bool(_row_get(row, "is_blocked", 0)),
+            "created_at": row["created_at"],
+        },
+        "stats": stats,
+    }
+
+
+def admin_reset_partner_password(admin_id: int, partner_id: int) -> str:
+    """Генерирует новый пароль, сохраняет хеш, возвращает пароль для передачи партнёру."""
+    password = generate_user_password()
+    password_hash = generate_password_hash(password)
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE partners SET password_hash = ? WHERE id = ?",
+            (password_hash, partner_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Партнёр не найден.")
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            "reset_password",
+            target_type="partner",
+            target_id=str(partner_id),
+            detail="Пароль сброшен (сгенерирован системой)",
+        )
+        conn.commit()
+    return password
+
+
+def admin_set_partner_blocked(admin_id: int, partner_id: int, blocked: bool) -> None:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE partners SET is_blocked = ? WHERE id = ?",
+            (1 if blocked else 0, partner_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Партнёр не найден.")
+        action = "block" if blocked else "unblock"
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            action,
+            target_type="partner",
+            target_id=str(partner_id),
+            detail="Доступ заблокирован" if blocked else "Доступ восстановлен",
+        )
+        conn.commit()
+
+
+def list_promos_admin() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.code, p.coins, p.active, p.max_uses, p.used_count,
+                   COALESCE(p.comment, '') AS comment,
+                   p.created_at,
+                   (SELECT COUNT(*) FROM promo_redemptions r WHERE r.code = p.code) AS clients_used
+            FROM promo_codes p
+            ORDER BY p.created_at DESC, p.code ASC
+            """
+        ).fetchall()
+    return [
+        {
+            "code": r["code"],
+            "coins": int(r["coins"]),
+            "active": bool(r["active"]),
+            "max_uses": r["max_uses"],
+            "used_count": int(r["used_count"] or 0),
+            "clients_used": int(r["clients_used"] or 0),
+            "comment": r["comment"] or "",
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def create_promo_admin(
+    *,
+    admin_id: int,
+    code: str,
+    coins: int,
+    comment: str = "",
+    max_uses: int | None = None,
+) -> dict:
+    code_norm = code.strip().upper()
+    if not code_norm or len(code_norm) < 3:
+        raise ValueError("Промокод: минимум 3 символа.")
+    coins = int(coins)
+    if coins < 1 or coins > 1000:
+        raise ValueError("Монет по промокоду: от 1 до 1000.")
+    if max_uses is not None:
+        max_uses = int(max_uses)
+        if max_uses < 1:
+            raise ValueError("Лимит использований должен быть больше 0.")
+
+    with get_connection() as conn:
+        exists = conn.execute(
+            "SELECT code FROM promo_codes WHERE code = ?", (code_norm,)
+        ).fetchone()
+        if exists:
+            raise ValueError("Такой промокод уже существует.")
+        conn.execute(
+            """
+            INSERT INTO promo_codes (code, coins, active, max_uses, used_count, comment, created_at)
+            VALUES (?, ?, 1, ?, 0, ?, datetime('now', 'localtime'))
+            """,
+            (code_norm, coins, max_uses, (comment or "").strip()),
+        )
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            "create_promo",
+            target_type="promo",
+            target_id=code_norm,
+            detail=f"+{coins} монет. {(comment or '').strip()}".strip(),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM promo_codes WHERE code = ?", (code_norm,)
+        ).fetchone()
+    return {
+        "code": row["code"],
+        "coins": int(row["coins"]),
+        "active": bool(row["active"]),
+        "max_uses": row["max_uses"],
+        "used_count": int(row["used_count"] or 0),
+        "clients_used": 0,
+        "comment": _row_get(row, "comment", ""),
+        "created_at": _row_get(row, "created_at", ""),
+    }
+
+
+def set_promo_active(admin_id: int, code: str, active: bool) -> dict:
+    code_norm = code.strip().upper()
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE promo_codes SET active = ? WHERE code = ?",
+            (1 if active else 0, code_norm),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Промокод не найден.")
+        action = "open_promo" if active else "close_promo"
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            action,
+            target_type="promo",
+            target_id=code_norm,
+            detail="Промокод открыт" if active else "Промокод закрыт",
+        )
+        conn.commit()
+    promos = {p["code"]: p for p in list_promos_admin()}
+    return promos[code_norm]
+
+
+def _period_bounds(date_from: str | None, date_to: str | None) -> tuple[str, str]:
+    """Нормализует границы периода (даты сервера, локальное время)."""
+    from datetime import datetime
+
+    today = datetime.now().date()
+    if date_from:
+        start = date_from.strip()[:10]
+    else:
+        start = today.isoformat()
+    if date_to:
+        end_day = date_to.strip()[:10]
+    else:
+        end_day = today.isoformat()
+    # inclusive end of day
+    end = f"{end_day} 23:59:59"
+    start_ts = f"{start} 00:00:00"
+    try:
+        datetime.strptime(start, "%Y-%m-%d")
+        datetime.strptime(end_day, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("Некорректный формат даты. Используйте ГГГГ-ММ-ДД.") from exc
+    if start > end_day:
+        raise ValueError("Дата «с» не может быть позже даты «по».")
+    return start_ts, end
+
+
+def admin_stats(date_from: str | None = None, date_to: str | None = None) -> dict:
+    start_ts, end_ts = _period_bounds(date_from, date_to)
+    with get_connection() as conn:
+        purchases = conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(coins_added), 0) AS coins_bought,
+              COALESCE(SUM(amount), 0) AS cash_rub,
+              COUNT(*) AS purchase_count
+            FROM coin_orders
+            WHERE created_at >= ? AND created_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        spends = conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(coins), 0) AS coins_spent,
+              COUNT(*) AS spend_count
+            FROM partner_spend_ops
+            WHERE created_at >= ? AND created_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        registrations = conn.execute(
+            """
+            SELECT COUNT(*) AS c FROM clients
+            WHERE created_at >= ? AND created_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        partner_regs = conn.execute(
+            """
+            SELECT COUNT(*) AS c FROM partners
+            WHERE created_at >= ? AND created_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        promo_uses = conn.execute(
+            """
+            SELECT COUNT(*) AS c FROM promo_redemptions
+            WHERE created_at >= ? AND created_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        top_partners = conn.execute(
+            """
+            SELECT
+              p.id,
+              p.business_name,
+              p.city,
+              COUNT(o.id) AS ops_count,
+              COALESCE(SUM(o.coins), 0) AS coins_total
+            FROM partner_spend_ops o
+            JOIN partners p ON p.id = o.partner_id
+            WHERE o.created_at >= ? AND o.created_at <= ?
+            GROUP BY p.id
+            ORDER BY coins_total DESC, ops_count DESC
+            LIMIT 20
+            """,
+            (start_ts, end_ts),
+        ).fetchall()
+        totals = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM clients) AS clients_total,
+              (SELECT COUNT(*) FROM partners) AS partners_total,
+              (SELECT COALESCE(SUM(coins), 0) FROM clients) AS coins_in_wallets
+            """
+        ).fetchone()
+
+    return {
+        "period": {"from": start_ts[:10], "to": end_ts[:10]},
+        "coins_bought": int(purchases["coins_bought"] or 0),
+        "cash_rub": int(purchases["cash_rub"] or 0),
+        "purchase_count": int(purchases["purchase_count"] or 0),
+        "coins_spent": int(spends["coins_spent"] or 0),
+        "spend_count": int(spends["spend_count"] or 0),
+        "client_registrations": int(registrations["c"] or 0),
+        "partner_registrations": int(partner_regs["c"] or 0),
+        "promo_redemptions": int(promo_uses["c"] or 0),
+        "clients_total": int(totals["clients_total"] or 0),
+        "partners_total": int(totals["partners_total"] or 0),
+        "coins_in_wallets": int(totals["coins_in_wallets"] or 0),
+        "top_partners": [
+            {
+                "id": r["id"],
+                "business_name": r["business_name"],
+                "city": r["city"] or "",
+                "ops_count": int(r["ops_count"] or 0),
+                "coins_total": int(r["coins_total"] or 0),
+            }
+            for r in top_partners
+        ],
+    }
+

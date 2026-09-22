@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Админ-панель — FlowBonus</title>
+  <link rel="icon" href="/assets/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/assets/favicon-32.png" sizes="32x32" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/cabinet/css/cabinet.css" />
+  <link rel="stylesheet" href="/admin/css/admin.css" />
+</head>
+<body class="cabinet-body admin-body">
+  <header class="site-header cabinet-header">
+    <div class="container">
+      <div class="nav cabinet-nav-top">
+        <a class="logo" href="/admin/">
+          <img class="logo-mark" src="/flowbonus-hero.png" alt="" />
+          Flow<span>Bonus</span>
+        </a>
+        <button class="btn btn-ghost" type="button" id="logout-btn">Выйти</button>
+      </div>
+      <p class="cabinet-user-line" id="admin-name">Администратор</p>
+    </div>
+  </header>
+
+  <main class="container cabinet-main">
+    <div class="cabinet-top reveal is-visible">
+      <div>
+        <p class="eyebrow">Админ-панель</p>
+        <h1>Управление платформой</h1>
+      </div>
+    </div>
+
+    <nav class="cabinet-tabs" aria-label="Разделы админки">
+      <button class="cabinet-tab is-active" type="button" data-tab="stats">Статистика</button>
+      <button class="cabinet-tab" type="button" data-tab="clients">Клиенты</button>
+      <button class="cabinet-tab" type="button" data-tab="partners">Партнёры</button>
+      <button class="cabinet-tab" type="button" data-tab="promos">Промокоды</button>
+      <button class="cabinet-tab" type="button" data-tab="audit">Журнал</button>
+    </nav>
+
+    <section class="cabinet-panel is-active" id="tab-stats">
+      <div class="section-head">
+        <h2>Статистика</h2>
+        <p>Цифры из реальных операций: покупки, списания, регистрации.</p>
+      </div>
+      <div class="admin-period">
+        <div class="admin-period-presets">
+          <button class="btn btn-ghost" type="button" data-period="today">Сегодня</button>
+          <button class="btn btn-ghost" type="button" data-period="month">Месяц</button>
+          <button class="btn btn-ghost" type="button" data-period="all">Всё время</button>
+        </div>
+        <div class="admin-period-custom">
+          <label>С <input type="date" id="stats-from" /></label>
+          <label>По <input type="date" id="stats-to" /></label>
+          <button class="btn btn-primary" type="button" id="stats-apply">Показать</button>
+        </div>
+      </div>
+      <p class="form-note" id="stats-period-label"></p>
+      <div class="admin-stat-grid" id="stats-cards"></div>
+      <div class="section-head" style="margin-top: 1.5rem;">
+        <h2>Топ партнёров по списаниям</h2>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="stats-partners-table">
+          <thead>
+            <tr>
+              <th>Партнёр</th>
+              <th>Город</th>
+              <th>Операций</th>
+              <th>Монет</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty-state" id="stats-partners-empty" hidden>За период списаний нет.</p>
+    </section>
+
+    <section class="cabinet-panel" id="tab-clients">
+      <div class="section-head">
+        <h2>Клиенты</h2>
+        <p>Все зарегистрированные клиенты. Глазок открывает карточку с данными и действиями.</p>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="clients-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>ФИО</th>
+              <th>Телефон</th>
+              <th>Город</th>
+              <th>Монеты</th>
+              <th>Статус</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty-state" id="clients-empty" hidden>Клиентов пока нет.</p>
+    </section>
+
+    <section class="cabinet-panel" id="tab-partners">
+      <div class="section-head">
+        <h2>Партнёры</h2>
+        <p>Зарегистрированные точки. Можно сбросить пароль и заблокировать доступ.</p>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="partners-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Бизнес</th>
+              <th>Контакт</th>
+              <th>Телефон</th>
+              <th>Город</th>
+              <th>Статус</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty-state" id="partners-empty" hidden>Партнёров пока нет.</p>
+    </section>
+
+    <section class="cabinet-panel" id="tab-promos">
+      <div class="section-head admin-section-row">
+        <div>
+          <h2>Промокоды</h2>
+          <p>Создание, учёт активаций и закрытие промокодов.</p>
+        </div>
+        <button class="btn btn-primary" type="button" id="promo-add-btn" aria-label="Создать промокод">+</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="promos-table">
+          <thead>
+            <tr>
+              <th>Код</th>
+              <th>Монеты</th>
+              <th>Использований</th>
+              <th>Комментарий</th>
+              <th>Статус</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty-state" id="promos-empty" hidden>Промокодов нет.</p>
+    </section>
+
+    <section class="cabinet-panel" id="tab-audit">
+      <div class="section-head">
+        <h2>Журнал действий</h2>
+        <p>Сброс паролей, блокировки, начисления и изменения промокодов.</p>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="audit-table">
+          <thead>
+            <tr>
+              <th>Когда</th>
+              <th>Действие</th>
+              <th>Объект</th>
+              <th>Детали</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty-state" id="audit-empty" hidden>Пока пусто.</p>
+    </section>
+  </main>
+
+  <div class="admin-modal" id="client-modal" hidden>
+    <div class="admin-modal-backdrop" data-close-modal></div>
+    <div class="admin-modal-panel" role="dialog" aria-modal="true" aria-labelledby="client-modal-title">
+      <div class="admin-modal-head">
+        <h2 id="client-modal-title">Клиент</h2>
+        <button class="btn btn-ghost" type="button" data-close-modal>Закрыть</button>
+      </div>
+      <div id="client-modal-body"></div>
+    </div>
+  </div>
+
+  <div class="admin-modal" id="partner-modal" hidden>
+    <div class="admin-modal-backdrop" data-close-modal></div>
+    <div class="admin-modal-panel" role="dialog" aria-modal="true" aria-labelledby="partner-modal-title">
+      <div class="admin-modal-head">
+        <h2 id="partner-modal-title">Партнёр</h2>
+        <button class="btn btn-ghost" type="button" data-close-modal>Закрыть</button>
+      </div>
+      <div id="partner-modal-body"></div>
+    </div>
+  </div>
+
+  <div class="admin-modal" id="promo-modal" hidden>
+    <div class="admin-modal-backdrop" data-close-modal></div>
+    <div class="admin-modal-panel" role="dialog" aria-modal="true" aria-labelledby="promo-modal-title">
+      <div class="admin-modal-head">
+        <h2 id="promo-modal-title">Новый промокод</h2>
+        <button class="btn btn-ghost" type="button" data-close-modal>Закрыть</button>
+      </div>
+      <form class="pay-form" id="promo-create-form">
+        <label>
+          Промокод
+          <input type="text" id="promo-code" required minlength="3" maxlength="32" autocomplete="off" />
+        </label>
+        <label>
+          Монет клиенту
+          <input type="number" id="promo-coins" min="1" max="1000" value="1" required />
+        </label>
+        <label>
+          Комментарий для себя
+          <input type="text" id="promo-comment" maxlength="200" placeholder="Например: акция март" />
+        </label>
+        <label>
+          Лимит использований (необязательно)
+          <input type="number" id="promo-max-uses" min="1" placeholder="Без лимита" />
+        </label>
+        <button class="btn btn-primary" type="submit">Создать</button>
+        <p class="form-note" id="promo-create-status"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/admin/js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Вход администратора — FlowBonus</title>
+  <link rel="icon" href="/assets/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/assets/favicon-32.png" sizes="32x32" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/admin/css/admin.css" />
+</head>
+<body class="admin-login-body">
+  <main class="admin-login-wrap">
+    <div class="admin-login-card">
+      <a class="logo" href="/">
+        <img class="logo-mark" src="/flowbonus-hero.png" alt="" />
+        Flow<span>Bonus</span>
+      </a>
+      <p class="eyebrow">Админ-панель</p>
+      <h1 id="login-title">Вход</h1>
+      <p class="admin-login-note" id="login-note">Введите логин и пароль администратора.</p>
+
+      <form class="pay-form" id="admin-login-form">
+        <label>
+          Логин
+          <input type="text" id="admin-login" name="login" autocomplete="username" required minlength="3" maxlength="64" />
+        </label>
+        <label>
+          Пароль
+          <input type="password" id="admin-password" name="password" autocomplete="current-password" required minlength="6" />
+        </label>
+        <button class="btn btn-primary" type="submit" id="login-submit">Войти</button>
+        <p class="form-note admin-error" id="login-status" role="alert"></p>
+      </form>
+    </div>
+  </main>
+  <script src="/admin/js/login.js"></script>
+</body>
+</html>

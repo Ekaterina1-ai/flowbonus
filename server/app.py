@@ -14,21 +14,41 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from db import (
     add_coins,
     add_partner_image,
+    admin_add_client_coins,
+    admin_count,
+    admin_public,
+    admin_reset_client_password,
+    admin_reset_partner_password,
+    admin_set_client_blocked,
+    admin_set_partner_blocked,
+    admin_stats,
+    bootstrap_or_verify_admin,
+    client_is_blocked,
     client_public,
     create_client,
     create_partner,
+    create_promo_admin,
     create_spend_token,
     delete_partner_image,
+    get_admin_by_id,
+    get_client_admin_detail,
     get_client_by_id,
     get_connection,
+    get_partner_admin_detail,
     get_partner_by_id,
     init_db,
+    list_admin_audit,
+    list_clients_admin,
+    list_partners_admin,
     list_partners_public,
+    list_promos_admin,
     lookup_spend_token,
+    partner_is_blocked,
     partner_public,
     partner_stats,
     redeem_promo,
     redeem_spend_token,
+    set_promo_active,
     update_partner_profile,
     update_selected_city,
     verify_login,
@@ -47,6 +67,7 @@ MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
 
 PASSWORD_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9]{6,}$")
 PHONE_RE = re.compile(r"^\+?[0-9\s\-()]{10,20}$")
+ADMIN_LOGIN_RE = re.compile(r"^[A-Za-z0-9_.\-]{3,64}$")
 
 
 def _load_secret_key() -> str:
@@ -106,14 +127,36 @@ def current_client():
     client_id = session.get("client_id")
     if not client_id:
         return None
-    return get_client_by_id(client_id)
+    client = get_client_by_id(client_id)
+    if client and client_is_blocked(client):
+        session.clear()
+        return None
+    return client
 
 
 def current_partner():
     partner_id = session.get("partner_id")
     if not partner_id:
         return None
-    return get_partner_by_id(partner_id)
+    partner = get_partner_by_id(partner_id)
+    if partner and partner_is_blocked(partner):
+        session.clear()
+        return None
+    return partner
+
+
+def current_admin():
+    admin_id = session.get("admin_id")
+    if not admin_id:
+        return None
+    return get_admin_by_id(admin_id)
+
+
+def require_admin():
+    admin = current_admin()
+    if not admin:
+        return None, (jsonify({"error": "unauthorized"}), 401)
+    return admin, None
 
 
 # ---------- static landing & assets ----------
@@ -220,6 +263,32 @@ def partner_scan_redirect():
     return redirect(f"/partner-cabinet/?scan={token}")
 
 
+@app.get("/admin/login")
+@app.get("/admin/login/")
+def admin_login_page():
+    if current_admin():
+        return redirect("/admin/")
+    return send_from_directory(ROOT / "admin", "login.html")
+
+
+@app.get("/admin")
+@app.get("/admin/")
+def admin_cabinet_page():
+    if not current_admin():
+        return redirect("/admin/login")
+    return send_from_directory(ROOT / "admin", "index.html")
+
+
+@app.get("/admin/css/<path:filename>")
+def admin_css(filename: str):
+    return send_from_directory(ROOT / "admin" / "css", filename)
+
+
+@app.get("/admin/js/<path:filename>")
+def admin_js(filename: str):
+    return send_from_directory(ROOT / "admin" / "js", filename)
+
+
 # ---------- API ----------
 
 @app.get("/api/health")
@@ -300,6 +369,8 @@ def api_login():
     client = verify_login(phone, password)
     if not client:
         return jsonify({"error": "Неверный телефон или пароль."}), 401
+    if client_is_blocked(client):
+        return jsonify({"error": "Доступ к кабинету заблокирован."}), 403
 
     session.clear()
     session["client_id"] = client["id"]
@@ -488,6 +559,8 @@ def api_partner_login():
     partner = verify_partner_login(phone, password)
     if not partner:
         return jsonify({"error": "Неверный телефон или пароль."}), 401
+    if partner_is_blocked(partner):
+        return jsonify({"error": "Доступ к кабинету заблокирован."}), 403
 
     session.clear()
     session["partner_id"] = partner["id"]
@@ -605,6 +678,266 @@ def api_partner_redeem():
     except (TypeError, ValueError):
         return jsonify({"error": "Некорректное количество монет."}), 400
     return jsonify({**result, "stats": partner_stats(partner["id"])})
+
+
+# ---------- Admin API ----------
+
+@app.get("/api/admin/bootstrap-status")
+def api_admin_bootstrap_status():
+    return jsonify({"needs_bootstrap": admin_count() == 0})
+
+
+@app.post("/api/admin/login")
+def api_admin_login():
+    data = request.get_json(silent=True) or {}
+    login = (data.get("login") or "").strip()
+    password = data.get("password") or ""
+    if not login or not password:
+        return jsonify({"error": "Введите логин и пароль."}), 400
+    if admin_count() == 0 and not ADMIN_LOGIN_RE.match(login):
+        return jsonify(
+            {"error": "Логин: 3–64 символа, латиница, цифры, . _ -"}
+        ), 400
+    if not PASSWORD_RE.match(password):
+        return jsonify(
+            {"error": "Пароль: минимум 6 символов, только буквы или цифры."}
+        ), 400
+    try:
+        admin = bootstrap_or_verify_admin(login, password)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 401
+    session.clear()
+    session["admin_id"] = admin["id"]
+    session.permanent = True
+    return jsonify(
+        {
+            "ok": True,
+            "admin": admin_public(admin),
+            "bootstrap": False,
+            "redirect": "/admin/",
+        }
+    )
+
+
+@app.post("/api/admin/logout")
+def api_admin_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/admin/me")
+def api_admin_me():
+    admin, err = require_admin()
+    if err:
+        return err
+    return jsonify({"admin": admin_public(admin)})
+
+
+@app.get("/api/admin/stats")
+def api_admin_stats():
+    admin, err = require_admin()
+    if err:
+        return err
+    date_from = request.args.get("from") or None
+    date_to = request.args.get("to") or None
+    try:
+        stats = admin_stats(date_from, date_to)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "stats": stats})
+
+
+@app.get("/api/admin/audit")
+def api_admin_audit():
+    admin, err = require_admin()
+    if err:
+        return err
+    return jsonify({"ok": True, "items": list_admin_audit(80)})
+
+
+@app.get("/api/admin/clients")
+def api_admin_clients():
+    admin, err = require_admin()
+    if err:
+        return err
+    return jsonify({"ok": True, "clients": list_clients_admin()})
+
+
+@app.get("/api/admin/clients/<int:client_id>")
+def api_admin_client_detail(client_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    detail = get_client_admin_detail(client_id)
+    if not detail:
+        return jsonify({"error": "Клиент не найден."}), 404
+    return jsonify({"ok": True, "client": detail})
+
+
+@app.post("/api/admin/clients/<int:client_id>/coins")
+def api_admin_client_coins(client_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    try:
+        coins = int(data.get("coins") or 0)
+        balance = admin_add_client_coins(
+            admin_id=admin["id"],
+            client_id=client_id,
+            coins=coins,
+            note=str(data.get("note") or ""),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "coins": balance, "client": get_client_admin_detail(client_id)})
+
+
+@app.post("/api/admin/clients/<int:client_id>/password")
+def api_admin_client_password(client_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        password = admin_reset_client_password(admin["id"], client_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "password": password})
+
+
+@app.post("/api/admin/clients/<int:client_id>/block")
+def api_admin_client_block(client_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        admin_set_client_blocked(admin["id"], client_id, True)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "is_blocked": True})
+
+
+@app.post("/api/admin/clients/<int:client_id>/unblock")
+def api_admin_client_unblock(client_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        admin_set_client_blocked(admin["id"], client_id, False)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "is_blocked": False})
+
+
+@app.get("/api/admin/partners")
+def api_admin_partners():
+    admin, err = require_admin()
+    if err:
+        return err
+    return jsonify({"ok": True, "partners": list_partners_admin()})
+
+
+@app.get("/api/admin/partners/<int:partner_id>")
+def api_admin_partner_detail(partner_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    detail = get_partner_admin_detail(partner_id)
+    if not detail:
+        return jsonify({"error": "Партнёр не найден."}), 404
+    return jsonify({"ok": True, "partner": detail})
+
+
+@app.post("/api/admin/partners/<int:partner_id>/password")
+def api_admin_partner_password(partner_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        password = admin_reset_partner_password(admin["id"], partner_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "password": password})
+
+
+@app.post("/api/admin/partners/<int:partner_id>/block")
+def api_admin_partner_block(partner_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        admin_set_partner_blocked(admin["id"], partner_id, True)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "is_blocked": True})
+
+
+@app.post("/api/admin/partners/<int:partner_id>/unblock")
+def api_admin_partner_unblock(partner_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        admin_set_partner_blocked(admin["id"], partner_id, False)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "is_blocked": False})
+
+
+@app.get("/api/admin/promos")
+def api_admin_promos():
+    admin, err = require_admin()
+    if err:
+        return err
+    return jsonify({"ok": True, "promos": list_promos_admin()})
+
+
+@app.post("/api/admin/promos")
+def api_admin_create_promo():
+    admin, err = require_admin()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    max_uses = data.get("max_uses")
+    if max_uses in ("", None):
+        max_uses = None
+    try:
+        promo = create_promo_admin(
+            admin_id=admin["id"],
+            code=str(data.get("code") or ""),
+            coins=int(data.get("coins") or 0),
+            comment=str(data.get("comment") or ""),
+            max_uses=max_uses,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректные данные промокода."}), 400
+    return jsonify({"ok": True, "promo": promo})
+
+
+@app.post("/api/admin/promos/<path:code>/close")
+def api_admin_close_promo(code: str):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        promo = set_promo_active(admin["id"], code, False)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "promo": promo})
+
+
+@app.post("/api/admin/promos/<path:code>/open")
+def api_admin_open_promo(code: str):
+    admin, err = require_admin()
+    if err:
+        return err
+    try:
+        promo = set_promo_active(admin["id"], code, True)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "promo": promo})
 
 
 # ---------- error handlers ----------
