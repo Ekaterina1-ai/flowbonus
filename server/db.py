@@ -12,6 +12,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "flowbonus.db"
 DB_PATH = Path(os.environ.get("FLOWBONUS_DB_PATH") or DEFAULT_DB_PATH).expanduser()
 
+# Версия комплекта юридических документов. Меняется при публикации новой редакции:
+# по этому значению видно, какую именно редакцию принял пользователь.
+LEGAL_DOCS_VERSION = "2026-09-22-r2"
+
 
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -91,7 +95,7 @@ def init_db() -> None:
                 city TEXT NOT NULL DEFAULT '',
                 address TEXT NOT NULL DEFAULT '',
                 comment TEXT NOT NULL DEFAULT '',
-                spend_coins INTEGER NOT NULL DEFAULT 2,
+                spend_coins INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -134,6 +138,18 @@ def init_db() -> None:
                 FOREIGN KEY (admin_id) REFERENCES admins(id)
             );
 
+            CREATE TABLE IF NOT EXISTS consents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_type TEXT NOT NULL,
+                subject_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                granted INTEGER NOT NULL,
+                docs_version TEXT NOT NULL DEFAULT '',
+                ip TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS admin_audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 admin_id INTEGER NOT NULL,
@@ -155,6 +171,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_partner_images_partner ON partner_images(partner_id, sort_order);
             CREATE INDEX IF NOT EXISTS idx_coin_ledger_client ON coin_ledger(client_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
+            CREATE INDEX IF NOT EXISTS idx_consents_subject ON consents(subject_type, subject_id, kind);
             CREATE INDEX IF NOT EXISTS idx_coin_orders_created ON coin_orders(created_at);
             CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_created ON partner_spend_ops(created_at);
             """
@@ -207,6 +224,65 @@ def normalize_phone(phone: str) -> str:
     if len(digits) == 10:
         digits = "7" + digits
     return digits
+
+
+CONSENT_KINDS = ("terms", "pd", "marketing")
+
+
+def record_consents(
+    *,
+    subject_type: str,
+    subject_id: int,
+    consents: dict[str, bool],
+    ip: str = "",
+    user_agent: str = "",
+    docs_version: str = LEGAL_DOCS_VERSION,
+) -> None:
+    """Пишет в журнал факт предоставления или отзыва согласий.
+
+    Журнал только пополняется: отзыв согласия — это новая запись с granted=0,
+    поэтому история остаётся доказуемой.
+    """
+    rows = [
+        (
+            subject_type,
+            int(subject_id),
+            kind,
+            1 if consents.get(kind) else 0,
+            docs_version,
+            (ip or "")[:64],
+            (user_agent or "")[:512],
+        )
+        for kind in CONSENT_KINDS
+        if kind in consents
+    ]
+    if not rows:
+        return
+    with get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO consents
+                (subject_type, subject_id, kind, granted, docs_version, ip, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.commit()
+
+
+def latest_consent(subject_type: str, subject_id: int, kind: str) -> bool:
+    """Актуальное состояние согласия — последняя запись в журнале."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT granted FROM consents
+            WHERE subject_type = ? AND subject_id = ? AND kind = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (subject_type, int(subject_id), kind),
+        ).fetchone()
+    return bool(row and row["granted"])
 
 
 def create_client(
@@ -416,7 +492,7 @@ def partner_public(row: sqlite3.Row) -> dict:
         "website": _row_get(row, "website", ""),
         "description": _row_get(row, "description", ""),
         "hours": _row_get(row, "hours", ""),
-        "spend_coins": int(row["spend_coins"] or 2),
+        "spend_coins": int(row["spend_coins"] or 1),
         "images": images,
         "image": images[0]["path"] if images else "/assets/partners/norma-tela.png",
     }
@@ -507,7 +583,7 @@ def list_partners_public(city: str | None = None) -> list[dict]:
                 "hours": _row_get(row, "hours", ""),
                 "website": _row_get(row, "website", ""),
                 "description": _row_get(row, "description", "") or (row["comment"] or ""),
-                "spend_coins": int(row["spend_coins"] or 2),
+                "spend_coins": int(row["spend_coins"] or 1),
                 "images": paths,
                 "image": paths[0] if paths else "/assets/partners/norma-tela.png",
             }
@@ -1146,7 +1222,7 @@ def list_partners_admin() -> list[dict]:
             "website": _row_get(r, "website", ""),
             "description": _row_get(r, "description", ""),
             "hours": _row_get(r, "hours", ""),
-            "spend_coins": int(r["spend_coins"] or 2),
+            "spend_coins": int(r["spend_coins"] or 1),
             "is_blocked": bool(r["is_blocked"]),
             "created_at": r["created_at"],
         }
@@ -1173,7 +1249,7 @@ def get_partner_admin_detail(partner_id: int) -> dict | None:
             "website": _row_get(row, "website", ""),
             "description": _row_get(row, "description", ""),
             "hours": _row_get(row, "hours", ""),
-            "spend_coins": int(row["spend_coins"] or 2),
+            "spend_coins": int(row["spend_coins"] or 1),
             "is_blocked": bool(_row_get(row, "is_blocked", 0)),
             "created_at": row["created_at"],
         },

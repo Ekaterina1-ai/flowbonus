@@ -139,7 +139,7 @@
       </div>
 
       <div class="pay-panel-content is-active" id="pay-panel-card" role="tabpanel">
-        <p class="form-note">Данные карты не сохраняются в приложении.</p>
+        <p class="form-note"><strong>Демонстрационный режим.</strong> Оплата пока не подключена: деньги не списываются, данные карты не запрашиваются. Монеты начисляются для показа работы сервиса. После подключения платёжного сервиса Продамус оплата будет проходить на его защищённой странице.</p>
         <form class="pay-form" id="pay-form">
           <label>
             Количество монет
@@ -147,21 +147,7 @@
           </label>
           <p class="pay-sum">К оплате: <strong id="pay-amount">100</strong> ₽</p>
           <p class="form-note" id="pay-pack-hint">1–4 монеты — по 100 ₽ · 5–9 — по 90 ₽ · от 10 — по 80 ₽</p>
-          <label>
-            Номер карты
-            <input type="text" id="card-number" inputmode="numeric" placeholder="0000 0000 0000 0000" maxlength="19" required autocomplete="cc-number" />
-          </label>
-          <div class="pay-row">
-            <label>
-              Срок
-              <input type="text" id="card-exp" placeholder="ММ/ГГ" maxlength="5" required autocomplete="cc-exp" />
-            </label>
-            <label>
-              CVC
-              <input type="password" id="card-cvc" inputmode="numeric" placeholder="000" maxlength="4" required autocomplete="cc-csc" />
-            </label>
-          </div>
-          <button class="btn btn-gold" type="submit">Оплатить</button>
+          <button class="btn btn-gold" type="submit">Пополнить (демонстрационный режим)</button>
           <p class="form-note" id="pay-status"></p>
         </form>
       </div>

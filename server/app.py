@@ -46,6 +46,7 @@ from db import (
     partner_is_blocked,
     partner_public,
     partner_stats,
+    record_consents,
     redeem_promo,
     redeem_spend_token,
     set_promo_active,
@@ -165,6 +166,11 @@ if os.environ.get("TRUST_PROXY", "1") == "1":
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 init_db()
+
+
+def _request_ip() -> str:
+    """IP клиента для журнала согласий (ProxyFix уже развернул X-Forwarded-For)."""
+    return request.remote_addr or ""
 
 
 def load_cities() -> list[str]:
@@ -391,9 +397,11 @@ def api_register():
         return jsonify({"error": "Заполните все поля."}), 400
     if not data.get("accept_terms"):
         return jsonify(
-            {
-                "error": "Нужно принять условия и дать согласие на обработку персональных данных."
-            }
+            {"error": "Нужно принять пользовательское соглашение и оферту."}
+        ), 400
+    if not data.get("accept_pd"):
+        return jsonify(
+            {"error": "Нужно дать согласие на обработку персональных данных."}
         ), 400
     if not PHONE_RE.match(phone):
         return jsonify({"error": "Некорректный номер телефона."}), 400
@@ -419,6 +427,18 @@ def api_register():
         if "unique" in msg or "unique constraint" in msg:
             return jsonify({"error": "Такой телефон или email уже зарегистрирован."}), 409
         return jsonify({"error": "Не удалось создать профиль."}), 500
+
+    record_consents(
+        subject_type="client",
+        subject_id=client["id"],
+        consents={
+            "terms": True,
+            "pd": True,
+            "marketing": bool(data.get("accept_marketing")),
+        },
+        ip=_request_ip(),
+        user_agent=request.headers.get("User-Agent", ""),
+    )
 
     session.clear()
     session["client_id"] = client["id"]
@@ -469,7 +489,12 @@ def api_set_city():
 
 @app.post("/api/buy-coins")
 def api_buy_coins():
-    """Демо-оплата: карту не сохраняем, только last4 для истории."""
+    """Демонстрационное пополнение до подключения Продамуса.
+
+    Реквизиты карты здесь не принимаются и не должны приниматься: после
+    интеграции клиент вводит карту на платёжной странице Продамуса, а сюда
+    приходит только результат платежа.
+    """
     client = current_client()
     if not client:
         return jsonify({"error": "unauthorized"}), 401
@@ -480,29 +505,23 @@ def api_buy_coins():
     except (TypeError, ValueError):
         return jsonify({"error": "Укажите количество монет."}), 400
 
-    card_number = re.sub(r"\D", "", str(data.get("card_number") or ""))
-    card_exp = (data.get("card_exp") or "").strip()
-    card_cvc = re.sub(r"\D", "", str(data.get("card_cvc") or ""))
-
     if coins < 1 or coins > 100:
-        return jsonify({"error": "Можно купить от 1 до 100 монет за раз."}), 400
-    if len(card_number) < 16:
-        return jsonify({"error": "Проверьте номер карты."}), 400
-    if not re.match(r"^\d{2}/\d{2}$", card_exp):
-        return jsonify({"error": "Срок карты в формате ММ/ГГ."}), 400
-    if len(card_cvc) < 3:
-        return jsonify({"error": "Проверьте CVC-код."}), 400
+        return jsonify({"error": "Можно пополнить от 1 до 100 монет за раз."}), 400
 
     quote = coin_purchase_quote(coins)
     amount = quote["amount_rub"]
-    new_balance = add_coins(client["id"], coins, amount, card_number[-4:])
+    new_balance = add_coins(client["id"], coins, amount, "")
     if quote["discount_pct"]:
         message = (
-            f"Зачислено {coins} монет на сумму {amount} ₽ "
-            f"(−{quote['discount_pct']}%, по {quote['unit_price_rub']} ₽)."
+            f"Демонстрационный режим: начислено {coins} монет "
+            f"на сумму {amount} ₽ (−{quote['discount_pct']}%, "
+            f"по {quote['unit_price_rub']} ₽). Деньги не списаны."
         )
     else:
-        message = f"Зачислено {coins} монет на сумму {amount} ₽."
+        message = (
+            f"Демонстрационный режим: начислено {coins} монет "
+            f"на сумму {amount} ₽. Деньги не списаны."
+        )
     return jsonify(
         {
             "ok": True,
@@ -596,9 +615,11 @@ def api_partner_register():
         return jsonify({"error": "Заполните обязательные поля."}), 400
     if not data.get("accept_terms"):
         return jsonify(
-            {
-                "error": "Нужно принять условия и дать согласие на обработку персональных данных."
-            }
+            {"error": "Нужно принять пользовательское соглашение и оферту партнёру."}
+        ), 400
+    if not data.get("accept_pd"):
+        return jsonify(
+            {"error": "Нужно дать согласие на обработку персональных данных."}
         ), 400
     if not PHONE_RE.match(phone):
         return jsonify({"error": "Некорректный номер телефона."}), 400
@@ -625,6 +646,18 @@ def api_partner_register():
         if "unique" in msg:
             return jsonify({"error": "Этот телефон уже зарегистрирован как партнёр."}), 409
         return jsonify({"error": "Не удалось создать кабинет партнёра."}), 500
+
+    record_consents(
+        subject_type="partner",
+        subject_id=partner["id"],
+        consents={
+            "terms": True,
+            "pd": True,
+            "marketing": bool(data.get("accept_marketing")),
+        },
+        ip=_request_ip(),
+        user_agent=request.headers.get("User-Agent", ""),
+    )
 
     session.clear()
     session["partner_id"] = partner["id"]

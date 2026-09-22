@@ -95,7 +95,11 @@ function initAuthForms() {
       const fd = new FormData(registerForm);
       errorEl.textContent = "";
       if (!fd.get("accept_terms")) {
-        errorEl.textContent = "Нужно принять условия и дать согласие на обработку персональных данных.";
+        errorEl.textContent = "Нужно принять пользовательское соглашение и оферту.";
+        return;
+      }
+      if (!fd.get("accept_pd")) {
+        errorEl.textContent = "Нужно дать согласие на обработку персональных данных.";
         return;
       }
       button.disabled = true;
@@ -110,6 +114,8 @@ function initAuthForms() {
             password: fd.get("password"),
             password2: fd.get("password2"),
             accept_terms: true,
+            accept_pd: true,
+            accept_marketing: Boolean(fd.get("accept_marketing")),
           }),
         });
         window.location.href = data.redirect || "/cabinet/";
@@ -157,7 +163,13 @@ function initAuthForms() {
       if (errorEl) errorEl.textContent = "";
       if (!fd.get("accept_terms")) {
         if (errorEl) {
-          errorEl.textContent = "Нужно принять условия и дать согласие на обработку персональных данных.";
+          errorEl.textContent = "Нужно принять пользовательское соглашение и оферту партнёру.";
+        }
+        return;
+      }
+      if (!fd.get("accept_pd")) {
+        if (errorEl) {
+          errorEl.textContent = "Нужно дать согласие на обработку персональных данных.";
         }
         return;
       }
@@ -176,6 +188,8 @@ function initAuthForms() {
             password: fd.get("password"),
             password2: fd.get("password2"),
             accept_terms: true,
+            accept_pd: true,
+            accept_marketing: Boolean(fd.get("accept_marketing")),
           }),
         });
         window.location.href = data.redirect || "/partner-cabinet/";

@@ -398,22 +398,9 @@ function bindCity() {
 
 function bindPay() {
   const coinsInput = document.getElementById("pay-coins");
-  const cardNumber = document.getElementById("card-number");
-  const cardExp = document.getElementById("card-exp");
 
   coinsInput.addEventListener("input", () => {
     updatePayQuote();
-  });
-
-  cardNumber.addEventListener("input", () => {
-    const digits = cardNumber.value.replace(/\D/g, "").slice(0, 16);
-    cardNumber.value = digits.replace(/(\d{4})(?=\d)/g, "$1 ").trim();
-  });
-
-  cardExp.addEventListener("input", () => {
-    let v = cardExp.value.replace(/\D/g, "").slice(0, 4);
-    if (v.length >= 3) v = `${v.slice(0, 2)}/${v.slice(2)}`;
-    cardExp.value = v;
   });
 
   document.getElementById("pay-form").addEventListener("submit", async (event) => {
@@ -425,9 +412,6 @@ function bindPay() {
         method: "POST",
         body: JSON.stringify({
           coins: Number(coinsInput.value),
-          card_number: cardNumber.value,
-          card_exp: cardExp.value,
-          card_cvc: document.getElementById("card-cvc").value,
         }),
       });
       setCoins(data.coins);
