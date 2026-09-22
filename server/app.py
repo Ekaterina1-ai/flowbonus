@@ -345,6 +345,11 @@ def admin_js(filename: str):
     return send_from_directory(ROOT / "admin" / "js", filename)
 
 
+@app.get("/legal/<path:filename>")
+def legal_files(filename: str):
+    return send_from_directory(ROOT / "legal", filename)
+
+
 # ---------- API ----------
 
 @app.get("/api/health")
@@ -384,6 +389,12 @@ def api_register():
 
     if not all([fio, phone, email, city, password, password2]):
         return jsonify({"error": "Заполните все поля."}), 400
+    if not data.get("accept_terms"):
+        return jsonify(
+            {
+                "error": "Нужно принять условия и дать согласие на обработку персональных данных."
+            }
+        ), 400
     if not PHONE_RE.match(phone):
         return jsonify({"error": "Некорректный номер телефона."}), 400
     if "@" not in email or "." not in email:
@@ -583,6 +594,12 @@ def api_partner_register():
 
     if not all([business, category, name, phone, password, password2]):
         return jsonify({"error": "Заполните обязательные поля."}), 400
+    if not data.get("accept_terms"):
+        return jsonify(
+            {
+                "error": "Нужно принять условия и дать согласие на обработку персональных данных."
+            }
+        ), 400
     if not PHONE_RE.match(phone):
         return jsonify({"error": "Некорректный номер телефона."}), 400
     if not PASSWORD_RE.match(password):

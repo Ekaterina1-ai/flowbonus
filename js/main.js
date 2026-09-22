@@ -94,6 +94,10 @@ function initAuthForms() {
       const button = registerForm.querySelector('button[type="submit"]');
       const fd = new FormData(registerForm);
       errorEl.textContent = "";
+      if (!fd.get("accept_terms")) {
+        errorEl.textContent = "Нужно принять условия и дать согласие на обработку персональных данных.";
+        return;
+      }
       button.disabled = true;
       try {
         const data = await api("/api/register", {
@@ -105,6 +109,7 @@ function initAuthForms() {
             city: fd.get("city"),
             password: fd.get("password"),
             password2: fd.get("password2"),
+            accept_terms: true,
           }),
         });
         window.location.href = data.redirect || "/cabinet/";
@@ -150,6 +155,12 @@ function initAuthForms() {
       const button = partnerForm.querySelector('button[type="submit"]');
       const fd = new FormData(partnerForm);
       if (errorEl) errorEl.textContent = "";
+      if (!fd.get("accept_terms")) {
+        if (errorEl) {
+          errorEl.textContent = "Нужно принять условия и дать согласие на обработку персональных данных.";
+        }
+        return;
+      }
       button.disabled = true;
       try {
         const data = await api("/api/partner/register", {
@@ -164,6 +175,7 @@ function initAuthForms() {
             comment: fd.get("comment"),
             password: fd.get("password"),
             password2: fd.get("password2"),
+            accept_terms: true,
           }),
         });
         window.location.href = data.redirect || "/partner-cabinet/";

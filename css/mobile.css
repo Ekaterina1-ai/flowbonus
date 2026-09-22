@@ -307,11 +307,26 @@
   }
 
   .auth-form input,
-  form input,
+  form input:not([type="checkbox"]):not([type="radio"]),
   form select,
   form textarea {
     min-height: var(--m-touch);
     font-size: 16px;
+  }
+
+  .form-consent {
+    align-items: flex-start;
+  }
+
+  .form-consent input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    min-width: 1.25rem;
+    min-height: 1.25rem;
+  }
+
+  .form-consent-text {
+    font-size: 0.84rem;
   }
 
   .form-panel {
