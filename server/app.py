@@ -60,6 +60,62 @@ SERVER_DIR = Path(__file__).resolve().parent
 DATA_DIR = SERVER_DIR / "data"
 COIN_PRICE_RUB = 100
 
+
+def coin_unit_price(coins: int) -> tuple[int, int]:
+    """Цена за 1 монету и скидка % при единовременной покупке N монет."""
+    if coins >= 10:
+        return 80, 20
+    if coins >= 5:
+        return 90, 10
+    return COIN_PRICE_RUB, 0
+
+
+def coin_purchase_quote(coins: int) -> dict:
+    """Цена покупки по порогам: 1–4 → 100 ₽, 5–9 → 90 ₽, 10+ → 80 ₽."""
+    coins = int(coins)
+    if coins < 1:
+        raise ValueError("Укажите количество монет.")
+    unit_price, discount_pct = coin_unit_price(coins)
+    amount = coins * unit_price
+    base_amount = coins * COIN_PRICE_RUB
+    return {
+        "coins": coins,
+        "amount_rub": amount,
+        "unit_price_rub": unit_price,
+        "discount_pct": discount_pct,
+        "base_amount_rub": base_amount,
+        "tier": True if discount_pct else False,
+    }
+
+
+def coin_pricing_public() -> dict:
+    return {
+        "coin_price_rub": COIN_PRICE_RUB,
+        "coin_tiers": [
+            {
+                "min_coins": 1,
+                "max_coins": 4,
+                "unit_price_rub": 100,
+                "discount_pct": 0,
+                "label": "1–4 монеты",
+            },
+            {
+                "min_coins": 5,
+                "max_coins": 9,
+                "unit_price_rub": 90,
+                "discount_pct": 10,
+                "label": "5–9 монет",
+            },
+            {
+                "min_coins": 10,
+                "max_coins": None,
+                "unit_price_rub": 80,
+                "discount_pct": 20,
+                "label": "10 и более",
+            },
+        ],
+    }
+
 # Фотографии партнёров хранятся вне git-каталога на сервере, см. .env.example.
 BUNDLED_PARTNER_ASSETS = ROOT / "assets" / "partners"
 UPLOAD_DIR = Path(os.environ.get("FLOWBONUS_UPLOAD_DIR") or BUNDLED_PARTNER_ASSETS).expanduser()
@@ -293,7 +349,7 @@ def admin_js(filename: str):
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, "coin_price_rub": COIN_PRICE_RUB})
+    return jsonify({"ok": True, **coin_pricing_public()})
 
 
 @app.get("/api/cities")
@@ -313,7 +369,7 @@ def api_me():
     client = current_client()
     if not client:
         return jsonify({"error": "unauthorized"}), 401
-    return jsonify({"client": client_public(client), "coin_price_rub": COIN_PRICE_RUB})
+    return jsonify({"client": client_public(client), **coin_pricing_public()})
 
 
 @app.post("/api/register")
@@ -426,15 +482,25 @@ def api_buy_coins():
     if len(card_cvc) < 3:
         return jsonify({"error": "Проверьте CVC-код."}), 400
 
-    amount = coins * COIN_PRICE_RUB
+    quote = coin_purchase_quote(coins)
+    amount = quote["amount_rub"]
     new_balance = add_coins(client["id"], coins, amount, card_number[-4:])
+    if quote["discount_pct"]:
+        message = (
+            f"Зачислено {coins} монет на сумму {amount} ₽ "
+            f"(−{quote['discount_pct']}%, по {quote['unit_price_rub']} ₽)."
+        )
+    else:
+        message = f"Зачислено {coins} монет на сумму {amount} ₽."
     return jsonify(
         {
             "ok": True,
             "coins": new_balance,
             "added": coins,
             "amount_rub": amount,
-            "message": f"Зачислено {coins} монет на сумму {amount} ₽.",
+            "unit_price_rub": quote["unit_price_rub"],
+            "discount_pct": quote["discount_pct"],
+            "message": message,
         }
     )
 

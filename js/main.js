@@ -236,6 +236,15 @@ function initFaq() {
       });
     });
   });
+
+  const hash = location.hash.slice(1);
+  if (hash) {
+    const target = document.getElementById(hash);
+    if (target && target.classList.contains("faq-item")) {
+      target.open = true;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
 }
 
 function initHeroWipe() {

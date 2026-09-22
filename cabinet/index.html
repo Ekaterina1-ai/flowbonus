@@ -85,7 +85,7 @@
           <span id="wallet-coins">0</span>
           <img class="coin-icon coin-icon-lg" src="/assets/coin.svg" alt="монета" />
         </p>
-        <p class="form-note">1 монета = <span id="coin-price">100</span> ₽ при покупке в кабинете.</p>
+        <p class="form-note">Цена за монету при одной оплате: 1–4 → 100 ₽, 5–9 → 90 ₽, от 10 → 80 ₽.</p>
         <div class="btn-row wallet-actions">
           <button class="btn btn-primary" type="button" data-goto-tab="pay" data-open-pay-panel="card">Пополнить ЛС</button>
           <button class="btn btn-ghost" type="button" id="spend-btn">Списать</button>
@@ -146,6 +146,7 @@
             <input type="number" id="pay-coins" min="1" max="100" value="1" required />
           </label>
           <p class="pay-sum">К оплате: <strong id="pay-amount">100</strong> ₽</p>
+          <p class="form-note" id="pay-pack-hint">1–4 монеты — по 100 ₽ · 5–9 — по 90 ₽ · от 10 — по 80 ₽</p>
           <label>
             Номер карты
             <input type="text" id="card-number" inputmode="numeric" placeholder="0000 0000 0000 0000" maxlength="19" required autocomplete="cc-number" />

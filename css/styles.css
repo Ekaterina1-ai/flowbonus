@@ -597,7 +597,31 @@ section {
 
 .coin-note strong {
   display: block;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+
+.coin-note p {
+  margin: 0 0 0.55rem;
+  font-size: 0.98rem;
+  color: var(--ink-soft);
+}
+
+.coin-note p:last-child {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.coin-note a {
+  color: var(--gold-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.coin-note .inline-strong {
+  display: inline;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 /* FAQ */
@@ -665,6 +689,50 @@ section {
 
 .faq-body strong {
   color: var(--ink);
+}
+
+.faq-price-list {
+  list-style: none;
+  margin: 0 0 0.85rem;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.faq-price-list li {
+  display: grid;
+  gap: 0.15rem 0.75rem;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  padding: 0.75rem 0.9rem;
+  background: rgba(198, 160, 58, 0.08);
+  border: 1px solid rgba(198, 160, 58, 0.22);
+  border-radius: var(--radius);
+}
+
+.faq-price-pack {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.faq-price-sum {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--gold-deep);
+  justify-self: end;
+}
+
+.faq-price-note {
+  grid-column: 1 / -1;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.faq-body a {
+  color: var(--gold-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 .form-panel {

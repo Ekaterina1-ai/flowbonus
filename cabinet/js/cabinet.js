@@ -31,6 +31,11 @@ const state = {
   cities: [],
   selectedCity: "",
   coinPrice: 100,
+  coinTiers: [
+    { min_coins: 1, max_coins: 4, unit_price_rub: 100, discount_pct: 0 },
+    { min_coins: 5, max_coins: 9, unit_price_rub: 90, discount_pct: 10 },
+    { min_coins: 10, max_coins: null, unit_price_rub: 80, discount_pct: 20 },
+  ],
 };
 
 function setCoins(value) {
@@ -145,11 +150,47 @@ async function loadMe() {
   const data = await api("/api/me");
   state.client = data.client;
   state.coinPrice = data.coin_price_rub || 100;
+  if (Array.isArray(data.coin_tiers) && data.coin_tiers.length) {
+    state.coinTiers = data.coin_tiers;
+  }
   document.getElementById("user-name").textContent = state.client.fio;
   setSelectedCityUI(state.client.selected_city || "");
-  document.getElementById("coin-price").textContent = state.coinPrice;
-  document.getElementById("pay-amount").textContent = state.coinPrice;
+  updatePayQuote();
   setCoins(state.client.coins);
+}
+
+function unitPriceFor(coins) {
+  const n = Math.max(1, Number(coins) || 1);
+  if (n >= 10) return { unit: 80, discount: 20 };
+  if (n >= 5) return { unit: 90, discount: 10 };
+  return { unit: state.coinPrice || 100, discount: 0 };
+}
+
+function quotePurchase(coins) {
+  const n = Math.max(1, Math.min(100, Number(coins) || 1));
+  const { unit, discount } = unitPriceFor(n);
+  return {
+    coins: n,
+    amount: n * unit,
+    unit,
+    discount,
+  };
+}
+
+function updatePayQuote() {
+  const coinsInput = document.getElementById("pay-coins");
+  const amountEl = document.getElementById("pay-amount");
+  const hintEl = document.getElementById("pay-pack-hint");
+  if (!coinsInput || !amountEl) return;
+  const q = quotePurchase(coinsInput.value);
+  amountEl.textContent = String(q.amount);
+  if (hintEl) {
+    if (q.discount) {
+      hintEl.textContent = `${q.coins} монет × ${q.unit} ₽ (−${q.discount}%) · к оплате ${q.amount} ₽`;
+    } else {
+      hintEl.textContent = `1–4 монеты — по ${state.coinPrice} ₽ · 5–9 — по 90 ₽ · от 10 — по 80 ₽`;
+    }
+  }
 }
 
 async function loadCities() {
@@ -357,13 +398,11 @@ function bindCity() {
 
 function bindPay() {
   const coinsInput = document.getElementById("pay-coins");
-  const amountEl = document.getElementById("pay-amount");
   const cardNumber = document.getElementById("card-number");
   const cardExp = document.getElementById("card-exp");
 
   coinsInput.addEventListener("input", () => {
-    const n = Math.max(1, Number(coinsInput.value) || 1);
-    amountEl.textContent = String(n * state.coinPrice);
+    updatePayQuote();
   });
 
   cardNumber.addEventListener("input", () => {
@@ -394,7 +433,8 @@ function bindPay() {
       setCoins(data.coins);
       status.textContent = data.message;
       document.getElementById("pay-form").reset();
-      amountEl.textContent = String(state.coinPrice);
+      coinsInput.value = "1";
+      updatePayQuote();
     } catch (err) {
       status.textContent = err.message;
     }
