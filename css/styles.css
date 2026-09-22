@@ -413,11 +413,22 @@ section {
   max-width: 18ch;
 }
 
+.tp-lead {
+  font-family: var(--font-display);
+  font-size: clamp(1.15rem, 2.1vw, 1.5rem);
+  letter-spacing: -0.02em;
+  line-height: 1.4;
+  margin: 0;
+  max-width: 42ch;
+  color: var(--ink);
+}
+
 .tp-support {
-  margin: 1rem 0 0;
-  max-width: 52ch;
+  margin: 0.85rem 0 0;
+  max-width: 48ch;
   color: var(--muted);
-  font-size: 1.05rem;
+  font-size: 1.02rem;
+  line-height: 1.55;
 }
 
 .steps {
