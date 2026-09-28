@@ -447,6 +447,14 @@
   height: 1.2rem;
 }
 
+.partner-card-privilege {
+  margin: 0.45rem 0 0;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
 .partner-details-btn {
   display: inline-flex;
   margin-top: 0.85rem;
@@ -729,8 +737,106 @@
   color: var(--ink-soft);
 }
 
+.plan-options {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.pay-form .plan-option {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.pay-form .plan-option:hover {
+  border-color: rgba(198, 160, 58, 0.45);
+}
+
+.pay-form .plan-option.is-active {
+  border-color: rgba(198, 160, 58, 0.65);
+  background: linear-gradient(180deg, rgba(198, 160, 58, 0.14), rgba(255, 255, 255, 0.9));
+}
+
+.pay-form .plan-option input {
+  width: auto;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--gold-deep);
+}
+
+.plan-option-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-option-title {
+  display: block;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.plan-option-meta {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.plan-option-price {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--gold-deep);
+  white-space: nowrap;
+}
+
 .wallet-actions {
   margin-top: 0.85rem;
+}
+
+.card-reminder {
+  color: var(--gold-deep);
+  font-weight: 650;
+}
+
+.card-history-head {
+  margin-top: 1.75rem;
+}
+
+.card-history {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 560px;
+}
+
+.card-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.card-history-item .form-note {
+  margin: 0.15rem 0 0;
+}
+
+.card-history-item strong {
+  font-family: var(--font-display);
+  flex-shrink: 0;
+}
+
+.card-history-item strong.is-plus {
+  color: var(--gold-deep);
 }
 
 .spend-qr-dialog {

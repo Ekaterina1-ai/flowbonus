@@ -36,10 +36,10 @@
         <h1 id="business-title">Ваша точка</h1>
       </div>
       <div class="coins-badge">
-        <span>Списано всего</span>
+        <span>Подарков выдано</span>
         <strong class="coins-value-row">
           <em id="stats-coins">0</em>
-          <img class="coin-icon" src="/assets/coin.svg" alt="монета" />
+          <img class="coin-icon" src="/assets/privilege.svg" alt="привилегий" />
         </strong>
       </div>
     </div>
@@ -53,8 +53,8 @@
 
     <section class="cabinet-panel is-active" id="tab-scan">
       <div class="section-head">
-        <h2>Списание монет клиента</h2>
-        <p>Включите камеру и отсканируйте QR из кабинета клиента. После подтверждения монеты спишутся с его счёта.</p>
+        <h2>Подтверждение привилегии клиента</h2>
+        <p>Клиент оплачивает у вас первую позицию, затем показывает QR из своего кабинета. Отсканируйте его и подтвердите привилегию — вторую позицию той же или меньшей стоимости вы выдаёте в подарок по вашей акции.</p>
       </div>
 
       <div class="btn-row">
@@ -68,18 +68,16 @@
       </div>
 
       <div class="redeem-card" id="redeem-card" hidden>
-        <h3>Подтверждение списания</h3>
+        <h3>Клубная карта клиента</h3>
         <p>Клиент: <strong id="redeem-fio">—</strong></p>
         <p>Телефон: <span id="redeem-phone">—</span></p>
-        <p>Баланс клиента: <strong id="redeem-balance">0</strong>
-          <img class="coin-icon coin-icon-sm" src="/assets/coin.svg" alt="" />
+        <p>Карта действует до: <strong id="redeem-valid">—</strong></p>
+        <p>Привилегий на карте: <strong id="redeem-balance">0</strong>
+          <img class="coin-icon coin-icon-sm" src="/assets/privilege.svg" alt="" />
         </p>
-        <label>
-          Списать монет
-          <input type="number" id="redeem-coins" min="1" max="50" value="2" />
-        </label>
+        <p class="form-note">После подтверждения у клиента будет использована 1 привилегия. Выдайте вторую позицию той же или меньшей стоимости в подарок.</p>
         <div class="btn-row" style="margin-top: 0.85rem;">
-          <button class="btn btn-gold" type="button" id="confirm-redeem-btn">Подтвердить списание</button>
+          <button class="btn btn-gold" type="button" id="confirm-redeem-btn">Подтвердить привилегию</button>
           <button class="btn btn-ghost" type="button" id="cancel-redeem-btn">Отмена</button>
         </div>
         <p class="form-note" id="redeem-status"></p>
@@ -89,12 +87,16 @@
     <section class="cabinet-panel" id="tab-offer">
       <div class="section-head">
         <h2>Условия акции</h2>
-        <p>Сколько монет клиент может потратить у вас за визит. Это число видно в его кабинете на карточке партнёра.</p>
+        <p>Опишите, что клиент получает в подарок за 1 привилегию клубной карты. Этот текст видят клиенты на карточке вашей точки. Акцию можно временно приостановить.</p>
       </div>
       <form class="pay-form" id="offer-form">
         <label>
-          Монет за визит
-          <input type="number" id="offer-spend-coins" min="1" max="50" value="2" required />
+          Что клиент получает в подарок
+          <textarea id="offer-privilege-text" rows="3" maxlength="300" placeholder="Например: при покупке любой услуги — вторая той же или меньшей стоимости в подарок"></textarea>
+        </label>
+        <label class="form-consent">
+          <input type="checkbox" id="offer-active" checked />
+          <span class="form-consent-text">Акция активна — клиенты видят точку и могут использовать привилегию</span>
         </label>
         <button class="btn btn-gold" type="submit">Сохранить</button>
         <p class="form-note" id="offer-status"></p>
@@ -104,16 +106,12 @@
     <section class="cabinet-panel" id="tab-stats">
       <div class="section-head">
         <h2>Статистика</h2>
-        <p>Операции списания по вашему QR-сканеру.</p>
+        <p>Привилегии, подтверждённые через ваш QR-сканер.</p>
       </div>
       <div class="stats-grid">
         <div class="stat-card">
-          <span>Операций</span>
+          <span>Привилегий подтверждено</span>
           <strong id="stats-ops">0</strong>
-        </div>
-        <div class="stat-card">
-          <span>Монет списано</span>
-          <strong id="stats-coins-2">0</strong>
         </div>
       </div>
       <div class="recent-list" id="recent-list"></div>

@@ -1,8 +1,11 @@
 """FlowBonus — инициализация SQLite и работа с пользователями."""
 from __future__ import annotations
 
+import calendar
 import os
+import secrets
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -14,7 +17,23 @@ DB_PATH = Path(os.environ.get("FLOWBONUS_DB_PATH") or DEFAULT_DB_PATH).expanduse
 
 # Версия комплекта юридических документов. Меняется при публикации новой редакции:
 # по этому значению видно, какую именно редакцию принял пользователь.
-LEGAL_DOCS_VERSION = "2026-09-22-r2"
+LEGAL_DOCS_VERSION = "2026-09-28-r3"
+
+# Тарифы клубной карты. Привилегии отдельно от карты не продаются, поэтому
+# цена есть только у тарифа целиком.
+CARD_PLANS = (
+    {"code": "m1", "title": "1 месяц", "months": 1, "privileges": 3, "price_rub": 300},
+    {"code": "m3", "title": "3 месяца", "months": 3, "privileges": 10, "price_rub": 900},
+    {"code": "m6", "title": "6 месяцев", "months": 6, "privileges": 25, "price_rub": 2000},
+)
+CARD_PLANS_BY_CODE = {plan["code"]: plan for plan in CARD_PLANS}
+
+PROMO_TRIAL_DAYS_DEFAULT = 14
+REFERRAL_BONUS_PRIVILEGES = 1
+REFERRAL_TRIAL_DAYS = 30
+# Бонусные привилегии (промокоды и приглашения) — не больше 40 в календарный год.
+BONUS_PRIVILEGES_YEAR_CAP = 40
+EXPIRY_REMINDER_DAYS = 7
 
 
 def get_connection() -> sqlite3.Connection:
@@ -174,6 +193,63 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_consents_subject ON consents(subject_type, subject_id, kind);
             CREATE INDEX IF NOT EXISTS idx_coin_orders_created ON coin_orders(created_at);
             CREATE INDEX IF NOT EXISTS idx_partner_spend_ops_created ON partner_spend_ops(created_at);
+
+            CREATE TABLE IF NOT EXISTS card_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                plan_code TEXT NOT NULL,
+                months INTEGER NOT NULL,
+                privileges INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                valid_until TEXT NOT NULL,
+                payment_ref TEXT NOT NULL DEFAULT '',
+                refunded_amount INTEGER NOT NULL DEFAULT 0,
+                refunded_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (client_id) REFERENCES clients(id)
+            );
+
+            -- Пакет привилегий: оплаченный (из тарифа) или бонусный.
+            -- Действует, пока активна клубная карта клиента.
+            CREATE TABLE IF NOT EXISTS privilege_lots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                source TEXT NOT NULL,
+                order_id INTEGER,
+                total INTEGER NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0,
+                price_rub INTEGER NOT NULL DEFAULT 0,
+                closed_at TEXT,
+                close_reason TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (client_id) REFERENCES clients(id),
+                FOREIGN KEY (order_id) REFERENCES card_orders(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS privilege_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL,
+                partner_id INTEGER,
+                admin_id INTEGER,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (client_id) REFERENCES clients(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS app_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_card_orders_client ON card_orders(client_id);
+            CREATE INDEX IF NOT EXISTS idx_card_orders_created ON card_orders(created_at);
+            CREATE INDEX IF NOT EXISTS idx_privilege_lots_client ON privilege_lots(client_id, closed_at);
+            CREATE INDEX IF NOT EXISTS idx_privilege_ledger_client ON privilege_ledger(client_id, created_at);
             """
         )
         # миграция колонок профиля партнёра
@@ -183,17 +259,37 @@ def init_db() -> None:
             ("description", "TEXT NOT NULL DEFAULT ''"),
             ("hours", "TEXT NOT NULL DEFAULT ''"),
             ("is_blocked", "INTEGER NOT NULL DEFAULT 0"),
+            ("privilege_text", "TEXT NOT NULL DEFAULT ''"),
+            ("offer_active", "INTEGER NOT NULL DEFAULT 1"),
         ):
             if col not in partner_cols:
                 conn.execute(f"ALTER TABLE partners ADD COLUMN {col} {ddl}")
 
         client_cols = {row[1] for row in conn.execute("PRAGMA table_info(clients)").fetchall()}
-        if "is_blocked" not in client_cols:
+        for col, ddl in (
+            ("is_blocked", "INTEGER NOT NULL DEFAULT 0"),
+            ("card_expires_at", "TEXT"),
+            ("ref_code", "TEXT"),
+            ("referred_by", "INTEGER"),
+            ("referral_rewarded", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if col not in client_cols:
+                conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {ddl}")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_ref_code ON clients(ref_code)"
+        )
+        for row in conn.execute("SELECT id FROM clients WHERE ref_code IS NULL").fetchall():
             conn.execute(
-                "ALTER TABLE clients ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0"
+                "UPDATE clients SET ref_code = ? WHERE id = ?",
+                (_new_ref_code(conn), row["id"]),
             )
 
         promo_cols = {row[1] for row in conn.execute("PRAGMA table_info(promo_codes)").fetchall()}
+        if "trial_days" not in promo_cols:
+            conn.execute(
+                "ALTER TABLE promo_codes ADD COLUMN trial_days INTEGER NOT NULL "
+                f"DEFAULT {PROMO_TRIAL_DAYS_DEFAULT}"
+            )
         if "comment" not in promo_cols:
             conn.execute(
                 "ALTER TABLE promo_codes ADD COLUMN comment TEXT NOT NULL DEFAULT ''"
@@ -214,7 +310,363 @@ def init_db() -> None:
               ('START2', 2, 1, NULL, 0)
             """
         )
+        _migrate_coin_balances(conn)
         conn.commit()
+
+
+def _migrate_coin_balances(conn: sqlite3.Connection) -> None:
+    """Однократно переносит остатки прежней версии сервиса в бонусные привилегии."""
+    done = conn.execute(
+        "SELECT value FROM app_meta WHERE key = 'coins_to_privileges'"
+    ).fetchone()
+    if done:
+        return
+    now = _utcnow()
+    expires = _fmt(now + timedelta(days=REFERRAL_TRIAL_DAYS))
+    note = "Перенос остатка из прежней версии сервиса"
+    for row in conn.execute("SELECT id, coins FROM clients WHERE coins > 0").fetchall():
+        count = int(row["coins"])
+        conn.execute(
+            "UPDATE clients SET coins = 0, card_expires_at = ? WHERE id = ?",
+            (expires, row["id"]),
+        )
+        conn.execute(
+            """
+            INSERT INTO privilege_lots (client_id, kind, source, total, note)
+            VALUES (?, 'bonus', 'migration', ?, ?)
+            """,
+            (row["id"], count, note),
+        )
+        conn.execute(
+            """
+            INSERT INTO privilege_ledger (client_id, delta, kind, source, note)
+            VALUES (?, ?, 'bonus', 'migration', ?)
+            """,
+            (row["id"], count, note),
+        )
+    conn.execute(
+        "INSERT INTO app_meta (key, value) VALUES ('coins_to_privileges', ?)",
+        (_fmt(now),),
+    )
+
+
+# ---------- Время и клубная карта ----------
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
+def _fmt(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("T", " ").replace("Z", ""))
+    except ValueError:
+        return None
+
+
+def _iso_utc(value: str | None) -> str | None:
+    """Время из БД (UTC) в ISO с суффиксом Z — браузер покажет его в местном поясе."""
+    dt = _parse(value)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    index = dt.month - 1 + months
+    year = dt.year + index // 12
+    month = index % 12 + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _new_ref_code(conn: sqlite3.Connection) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    while True:
+        code = "".join(secrets.choice(alphabet) for _ in range(8))
+        if not conn.execute("SELECT 1 FROM clients WHERE ref_code = ?", (code,)).fetchone():
+            return code
+
+
+def card_plans_public() -> list[dict]:
+    return [dict(plan) for plan in CARD_PLANS]
+
+
+def _ledger(
+    conn: sqlite3.Connection,
+    client_id: int,
+    delta: int,
+    source: str,
+    note: str,
+    *,
+    kind: str = "",
+    partner_id: int | None = None,
+    admin_id: int | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO privilege_ledger (client_id, delta, kind, source, partner_id, admin_id, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (client_id, delta, kind, source, partner_id, admin_id, note),
+    )
+
+
+def _close_expired_card(conn: sqlite3.Connection, client_id: int, now: datetime) -> None:
+    """Если срок карты истёк — аннулирует неиспользованные привилегии (ленивая проверка)."""
+    row = conn.execute(
+        "SELECT card_expires_at FROM clients WHERE id = ?", (client_id,)
+    ).fetchone()
+    expires = _parse(row["card_expires_at"]) if row else None
+    if expires is None or expires > now:
+        return
+    lots = conn.execute(
+        """
+        SELECT total - used AS left_count FROM privilege_lots
+        WHERE client_id = ? AND closed_at IS NULL
+        """,
+        (client_id,),
+    ).fetchall()
+    if not lots:
+        return
+    left = sum(int(lot["left_count"]) for lot in lots)
+    conn.execute(
+        """
+        UPDATE privilege_lots SET closed_at = ?, close_reason = 'expired'
+        WHERE client_id = ? AND closed_at IS NULL
+        """,
+        (_fmt(expires), client_id),
+    )
+    if left > 0:
+        _ledger(
+            conn,
+            client_id,
+            -left,
+            "expire",
+            "Срок клубной карты истёк, неиспользованные привилегии аннулированы",
+        )
+
+
+def _refund_amount(price_rub: int, total: int, left: int) -> int:
+    """Возврат за лот: цена × неиспользованные / всего, с округлением в пользу клиента."""
+    if total <= 0 or left <= 0:
+        return 0
+    return -(-int(price_rub) * int(left) // int(total))
+
+
+def _card_state(conn: sqlite3.Connection, client_id: int, now: datetime | None = None) -> dict:
+    now = now or _utcnow()
+    _close_expired_card(conn, client_id, now)
+    row = conn.execute(
+        "SELECT card_expires_at FROM clients WHERE id = ?", (client_id,)
+    ).fetchone()
+    expires = _parse(row["card_expires_at"]) if row else None
+    active = expires is not None and expires > now
+    paid = bonus = refund = 0
+    if active:
+        for lot in conn.execute(
+            """
+            SELECT kind, total, used, price_rub FROM privilege_lots
+            WHERE client_id = ? AND closed_at IS NULL
+            """,
+            (client_id,),
+        ).fetchall():
+            left = int(lot["total"]) - int(lot["used"])
+            if lot["kind"] == "paid":
+                paid += left
+                refund += _refund_amount(lot["price_rub"], lot["total"], left)
+            else:
+                bonus += left
+    days_left = 0
+    if active:
+        days_left = max(1, -(-int((expires - now).total_seconds()) // 86400))
+    privileges = paid + bonus
+    return {
+        "active": active,
+        "expires_at": _iso_utc(row["card_expires_at"]) if active else None,
+        "days_left": days_left,
+        "privileges": privileges,
+        "paid_privileges": paid,
+        "bonus_privileges": bonus,
+        "refund_rub": refund,
+        "reminder": active and days_left <= EXPIRY_REMINDER_DAYS and privileges > 0,
+    }
+
+
+def client_card(client_id: int) -> dict:
+    with get_connection() as conn:
+        state = _card_state(conn, client_id)
+        conn.commit()
+    return state
+
+
+def _bonus_granted_this_year(conn: sqlite3.Connection, client_id: int, now: datetime) -> int:
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(total), 0) AS s FROM privilege_lots
+        WHERE client_id = ? AND kind = 'bonus' AND source IN ('promo', 'referral')
+          AND strftime('%Y', created_at) = ?
+        """,
+        (client_id, str(now.year)),
+    ).fetchone()
+    return int(row["s"] or 0)
+
+
+def _grant_bonus(
+    conn: sqlite3.Connection,
+    client_id: int,
+    count: int,
+    *,
+    source: str,
+    note: str,
+    trial_days: int,
+    now: datetime,
+) -> tuple[int, bool]:
+    """Начисляет бонусные привилегии. Без активной карты открывает пробную.
+
+    Возвращает (начислено, открыта_пробная_карта). Годовой лимит соблюдается.
+    """
+    room = BONUS_PRIVILEGES_YEAR_CAP - _bonus_granted_this_year(conn, client_id, now)
+    count = min(int(count), max(0, room))
+    if count <= 0:
+        return 0, False
+    _close_expired_card(conn, client_id, now)
+    row = conn.execute(
+        "SELECT card_expires_at FROM clients WHERE id = ?", (client_id,)
+    ).fetchone()
+    expires = _parse(row["card_expires_at"])
+    opened_trial = False
+    if expires is None or expires <= now:
+        conn.execute(
+            "UPDATE clients SET card_expires_at = ? WHERE id = ?",
+            (_fmt(now + timedelta(days=max(1, int(trial_days)))), client_id),
+        )
+        opened_trial = True
+    conn.execute(
+        """
+        INSERT INTO privilege_lots (client_id, kind, source, total, note)
+        VALUES (?, 'bonus', ?, ?, ?)
+        """,
+        (client_id, source, count, note),
+    )
+    _ledger(conn, client_id, count, source, note, kind="bonus")
+    return count, opened_trial
+
+
+def _reward_referral(conn: sqlite3.Connection, client_id: int, now: datetime) -> None:
+    """После первой оплаты приглашённого друга — бонус обоим."""
+    row = conn.execute(
+        "SELECT referred_by, referral_rewarded FROM clients WHERE id = ?", (client_id,)
+    ).fetchone()
+    if not row or not row["referred_by"] or row["referral_rewarded"]:
+        return
+    conn.execute("UPDATE clients SET referral_rewarded = 1 WHERE id = ?", (client_id,))
+    _grant_bonus(
+        conn,
+        client_id,
+        REFERRAL_BONUS_PRIVILEGES,
+        source="referral",
+        note="Бонус за регистрацию по приглашению друга",
+        trial_days=REFERRAL_TRIAL_DAYS,
+        now=now,
+    )
+    inviter = conn.execute(
+        "SELECT id, COALESCE(is_blocked, 0) AS is_blocked FROM clients WHERE id = ?",
+        (row["referred_by"],),
+    ).fetchone()
+    if inviter and not inviter["is_blocked"]:
+        _grant_bonus(
+            conn,
+            inviter["id"],
+            REFERRAL_BONUS_PRIVILEGES,
+            source="referral",
+            note="Бонус за приглашённого друга",
+            trial_days=REFERRAL_TRIAL_DAYS,
+            now=now,
+        )
+
+
+def purchase_card(client_id: int, plan_code: str, payment_ref: str = "") -> dict:
+    """Оформляет клубную карту. При действующей карте срок продлевается от даты
+    её окончания, а привилегии нового тарифа доступны сразу."""
+    plan = CARD_PLANS_BY_CODE.get((plan_code or "").strip())
+    if not plan:
+        raise ValueError("Выберите тариф клубной карты.")
+    now = _utcnow()
+    with get_connection() as conn:
+        _close_expired_card(conn, client_id, now)
+        row = conn.execute(
+            "SELECT card_expires_at FROM clients WHERE id = ?", (client_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError("Клиент не найден.")
+        current = _parse(row["card_expires_at"])
+        extended = current is not None and current > now
+        new_expires = _add_months(current if extended else now, plan["months"])
+        cur = conn.execute(
+            """
+            INSERT INTO card_orders
+                (client_id, plan_code, months, privileges, amount, valid_until, payment_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                client_id,
+                plan["code"],
+                plan["months"],
+                plan["privileges"],
+                plan["price_rub"],
+                _fmt(new_expires),
+                payment_ref,
+            ),
+        )
+        note = f"Клубная карта «{plan['title']}», {plan['price_rub']} ₽"
+        conn.execute(
+            """
+            INSERT INTO privilege_lots
+                (client_id, kind, source, order_id, total, price_rub, note)
+            VALUES (?, 'paid', 'purchase', ?, ?, ?, ?)
+            """,
+            (client_id, cur.lastrowid, plan["privileges"], plan["price_rub"], note),
+        )
+        conn.execute(
+            "UPDATE clients SET card_expires_at = ? WHERE id = ?",
+            (_fmt(new_expires), client_id),
+        )
+        _ledger(conn, client_id, plan["privileges"], "purchase", note, kind="paid")
+        _reward_referral(conn, client_id, now)
+        conn.commit()
+    return {
+        "plan": dict(plan),
+        "extended": extended,
+        "valid_until": _iso_utc(_fmt(new_expires)),
+        "card": client_card(client_id),
+    }
+
+
+def client_history(client_id: int, limit: int = 50) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT delta, kind, source, note, created_at FROM privilege_ledger
+            WHERE client_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (client_id, max(1, min(200, int(limit)))),
+        ).fetchall()
+    return [
+        {
+            "delta": int(r["delta"]),
+            "kind": r["kind"],
+            "source": r["source"],
+            "note": r["note"] or "",
+            "created_at": _iso_utc(r["created_at"]),
+        }
+        for r in rows
+    ]
 
 
 def normalize_phone(phone: str) -> str:
@@ -292,6 +744,7 @@ def create_client(
     email: str,
     city: str,
     password: str,
+    ref_code: str = "",
 ) -> sqlite3.Row:
     phone_norm = normalize_phone(phone)
     password_hash = generate_password_hash(password)
@@ -302,12 +755,30 @@ def create_client(
         if exists_partner:
             raise ValueError("Этот телефон уже зарегистрирован как партнёр.")
 
+        referred_by = None
+        ref_norm = (ref_code or "").strip().upper()
+        if ref_norm:
+            inviter = conn.execute(
+                "SELECT id FROM clients WHERE ref_code = ?", (ref_norm,)
+            ).fetchone()
+            referred_by = inviter["id"] if inviter else None
+
         cur = conn.execute(
             """
-            INSERT INTO clients (fio, phone, email, city, password_hash, selected_city)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO clients
+                (fio, phone, email, city, password_hash, selected_city, ref_code, referred_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (fio.strip(), phone_norm, email.strip().lower(), city.strip(), password_hash, city.strip()),
+            (
+                fio.strip(),
+                phone_norm,
+                email.strip().lower(),
+                city.strip(),
+                password_hash,
+                city.strip(),
+                _new_ref_code(conn),
+                referred_by,
+            ),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM clients WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -343,31 +814,6 @@ def update_selected_city(client_id: int, city: str) -> None:
         conn.commit()
 
 
-def add_coins(client_id: int, coins: int, amount_rub: int, card_last4: str) -> int:
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE clients SET coins = coins + ? WHERE id = ?",
-            (coins, client_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO coin_orders (client_id, amount, coins_added, card_last4)
-            VALUES (?, ?, ?, ?)
-            """,
-            (client_id, amount_rub, coins, card_last4),
-        )
-        conn.execute(
-            """
-            INSERT INTO coin_ledger (client_id, delta, source, note)
-            VALUES (?, ?, 'purchase', ?)
-            """,
-            (client_id, coins, f"Покупка на {amount_rub} ₽"),
-        )
-        conn.commit()
-        row = conn.execute("SELECT coins FROM clients WHERE id = ?", (client_id,)).fetchone()
-        return int(row["coins"])
-
-
 def client_public(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
@@ -376,7 +822,8 @@ def client_public(row: sqlite3.Row) -> dict:
         "email": row["email"],
         "city": row["city"],
         "selected_city": row["selected_city"] or row["city"],
-        "coins": row["coins"],
+        "ref_code": _row_get(row, "ref_code", ""),
+        "card": client_card(row["id"]),
         "is_blocked": bool(_row_get(row, "is_blocked", 0)),
     }
 
@@ -418,11 +865,20 @@ def redeem_promo(client_id: int, code: str) -> dict:
         if promo["max_uses"] is not None and promo["used_count"] >= promo["max_uses"]:
             raise ValueError("Лимит активаций промокода исчерпан.")
 
-        coins = int(promo["coins"])
-        conn.execute(
-            "UPDATE clients SET coins = coins + ? WHERE id = ?",
-            (coins, client_id),
+        granted, opened_trial = _grant_bonus(
+            conn,
+            client_id,
+            int(promo["coins"]),
+            source="promo",
+            note=f"Промокод {code_norm}",
+            trial_days=int(_row_get(promo, "trial_days", PROMO_TRIAL_DAYS_DEFAULT)),
+            now=_utcnow(),
         )
+        if not granted:
+            raise ValueError(
+                "Достигнут годовой лимит бонусных привилегий "
+                f"({BONUS_PRIVILEGES_YEAR_CAP} в календарный год)."
+            )
         conn.execute(
             "UPDATE promo_codes SET used_count = used_count + 1 WHERE code = ?",
             (code_norm,),
@@ -432,27 +888,24 @@ def redeem_promo(client_id: int, code: str) -> dict:
             INSERT INTO promo_redemptions (client_id, code, coins)
             VALUES (?, ?, ?)
             """,
-            (client_id, code_norm, coins),
-        )
-        conn.execute(
-            """
-            INSERT INTO coin_ledger (client_id, delta, source, note)
-            VALUES (?, ?, 'promo', ?)
-            """,
-            (client_id, coins, f"Промокод {code_norm}"),
+            (client_id, code_norm, granted),
         )
         conn.commit()
-        balance = conn.execute(
-            "SELECT coins FROM clients WHERE id = ?",
-            (client_id,),
-        ).fetchone()["coins"]
 
-    return {"coins_added": coins, "balance": int(balance), "code": code_norm}
+    return {
+        "granted": granted,
+        "trial_opened": opened_trial,
+        "code": code_norm,
+        "card": client_card(client_id),
+    }
 
 
 def create_spend_token(client_id: int, ttl_minutes: int = 10) -> dict:
-    import secrets
-    from datetime import datetime, timedelta, timezone
+    card = client_card(client_id)
+    if not card["active"]:
+        raise ValueError("Клубная карта не активна. Оформите карту, чтобы пользоваться привилегиями.")
+    if card["privileges"] < 1:
+        raise ValueError("На карте не осталось привилегий. Оформите новую карту — привилегии добавятся сразу.")
 
     token = secrets.token_urlsafe(24)
     now = datetime.now(timezone.utc)
@@ -475,6 +928,7 @@ def create_spend_token(client_id: int, ttl_minutes: int = 10) -> dict:
         "token": token,
         "expires_at": expires.isoformat(),
         "ttl_minutes": ttl_minutes,
+        "card": card,
     }
 
 
@@ -492,7 +946,8 @@ def partner_public(row: sqlite3.Row) -> dict:
         "website": _row_get(row, "website", ""),
         "description": _row_get(row, "description", ""),
         "hours": _row_get(row, "hours", ""),
-        "spend_coins": int(row["spend_coins"] or 1),
+        "privilege_text": _row_get(row, "privilege_text", ""),
+        "offer_active": bool(_row_get(row, "offer_active", 1)),
         "images": images,
         "image": images[0]["path"] if images else "/assets/partners/norma-tela.png",
     }
@@ -565,6 +1020,7 @@ def list_partners_public(city: str | None = None) -> list[dict]:
                 """
                 SELECT * FROM partners
                 WHERE city = ? AND COALESCE(is_blocked, 0) = 0
+                  AND COALESCE(offer_active, 1) = 1
                 ORDER BY id ASC
                 """,
                 (city,),
@@ -573,7 +1029,7 @@ def list_partners_public(city: str | None = None) -> list[dict]:
             rows = conn.execute(
                 """
                 SELECT * FROM partners
-                WHERE COALESCE(is_blocked, 0) = 0
+                WHERE COALESCE(is_blocked, 0) = 0 AND COALESCE(offer_active, 1) = 1
                 ORDER BY id ASC
                 """
             ).fetchall()
@@ -593,7 +1049,7 @@ def list_partners_public(city: str | None = None) -> list[dict]:
                 "hours": _row_get(row, "hours", ""),
                 "website": _row_get(row, "website", ""),
                 "description": _row_get(row, "description", "") or (row["comment"] or ""),
-                "spend_coins": int(row["spend_coins"] or 1),
+                "privilege_text": _row_get(row, "privilege_text", ""),
                 "images": paths,
                 "image": paths[0] if paths else "/assets/partners/norma-tela.png",
             }
@@ -687,20 +1143,23 @@ def update_partner_profile(partner_id: int, **fields) -> sqlite3.Row:
     allowed = {
         "city",
         "address",
-        "spend_coins",
         "comment",
         "business_name",
         "website",
         "description",
         "hours",
         "category",
+        "privilege_text",
+        "offer_active",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_partner_by_id(partner_id)
 
-    if "spend_coins" in updates:
-        updates["spend_coins"] = max(1, min(50, int(updates["spend_coins"])))
+    if "privilege_text" in updates:
+        updates["privilege_text"] = str(updates["privilege_text"] or "").strip()[:300]
+    if "offer_active" in updates:
+        updates["offer_active"] = 1 if updates["offer_active"] else 0
 
     cols = ", ".join(f"{k} = ?" for k in updates)
     values = list(updates.values()) + [partner_id]
@@ -713,18 +1172,12 @@ def update_partner_profile(partner_id: int, **fields) -> sqlite3.Row:
 def partner_stats(partner_id: int) -> dict:
     with get_connection() as conn:
         row = conn.execute(
-            """
-            SELECT
-              COUNT(*) AS ops_count,
-              COALESCE(SUM(coins), 0) AS coins_total
-            FROM partner_spend_ops
-            WHERE partner_id = ?
-            """,
+            "SELECT COUNT(*) AS ops_count FROM partner_spend_ops WHERE partner_id = ?",
             (partner_id,),
         ).fetchone()
         recent = conn.execute(
             """
-            SELECT o.coins, o.created_at, c.fio, c.phone
+            SELECT o.created_at, c.fio, c.phone
             FROM partner_spend_ops o
             JOIN clients c ON c.id = o.client_id
             WHERE o.partner_id = ?
@@ -735,11 +1188,9 @@ def partner_stats(partner_id: int) -> dict:
         ).fetchall()
     return {
         "ops_count": int(row["ops_count"] or 0),
-        "coins_total": int(row["coins_total"] or 0),
         "recent": [
             {
-                "coins": r["coins"],
-                "created_at": r["created_at"],
+                "created_at": _iso_utc(r["created_at"]),
                 "client_fio": r["fio"],
                 "client_phone": r["phone"],
             }
@@ -749,98 +1200,103 @@ def partner_stats(partner_id: int) -> dict:
 
 
 def lookup_spend_token(token: str) -> dict:
-    from datetime import datetime, timezone
-
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT t.*, c.fio, c.phone, c.coins AS client_coins
+            SELECT t.*, c.fio, c.phone
             FROM spend_tokens t
             JOIN clients c ON c.id = t.client_id
             WHERE t.token = ?
             """,
             (token,),
         ).fetchone()
-    if not row:
-        raise ValueError("QR не найден или уже недействителен.")
-    if row["used"]:
-        raise ValueError("Этот QR уже был использован.")
+        if not row:
+            raise ValueError("QR не найден или уже недействителен.")
+        if row["used"]:
+            raise ValueError("Этот QR уже был использован.")
+        expires = _parse(row["expires_at"])
+        if expires is not None and _utcnow() > expires:
+            raise ValueError("Срок действия QR истёк. Попросите клиента открыть новый QR.")
+        card = _card_state(conn, row["client_id"])
+        conn.commit()
 
-    # expires_at stored as UTC string without timezone sometimes
-    try:
-        exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > exp:
-            raise ValueError("Срок действия QR истёк.")
-    except ValueError as exc:
-        if "истёк" in str(exc) or "использован" in str(exc) or "недействителен" in str(exc):
-            raise
-        # if parse fails, continue
+    if not card["active"]:
+        raise ValueError("У клиента нет активной клубной карты.")
+    if card["privileges"] < 1:
+        raise ValueError("У клиента не осталось привилегий на карте.")
 
     return {
         "token": row["token"],
         "client_id": row["client_id"],
         "client_fio": row["fio"],
         "client_phone": row["phone"],
-        "client_coins": int(row["client_coins"] or 0),
+        "card_expires_at": card["expires_at"],
+        "privileges": card["privileges"],
         "expires_at": row["expires_at"],
     }
 
 
-def redeem_spend_token(*, partner_id: int, token: str, coins: int) -> dict:
+def redeem_spend_token(*, partner_id: int, token: str) -> dict:
+    """Подтверждение привилегии: расходуется ровно одна привилегия.
+
+    Сначала бонусные, затем оплаченные — в порядке оформления.
+    """
     info = lookup_spend_token(token)
-    coins = int(coins)
-    if coins < 1:
-        raise ValueError("Укажите количество монет для списания.")
-    if coins > info["client_coins"]:
-        raise ValueError("У клиента недостаточно монет на счёте.")
+    client_id = info["client_id"]
 
     with get_connection() as conn:
-        # повторная проверка used
         row = conn.execute(
             "SELECT used FROM spend_tokens WHERE token = ?", (token,)
         ).fetchone()
         if not row or row["used"]:
             raise ValueError("Этот QR уже был использован.")
 
-        conn.execute(
-            "UPDATE clients SET coins = coins - ? WHERE id = ? AND coins >= ?",
-            (coins, info["client_id"], coins),
-        )
-        changed = conn.execute("SELECT changes()").fetchone()[0]
-        if not changed:
-            raise ValueError("Не удалось списать монеты.")
+        partner = conn.execute(
+            "SELECT business_name FROM partners WHERE id = ?", (partner_id,)
+        ).fetchone()
+        lot = conn.execute(
+            """
+            SELECT id, kind FROM privilege_lots
+            WHERE client_id = ? AND closed_at IS NULL AND used < total
+            ORDER BY CASE kind WHEN 'bonus' THEN 0 ELSE 1 END, id
+            LIMIT 1
+            """,
+            (client_id,),
+        ).fetchone()
+        if not lot:
+            raise ValueError("У клиента не осталось привилегий на карте.")
 
-        conn.execute(
-            "UPDATE spend_tokens SET used = 1 WHERE token = ?",
-            (token,),
+        cur = conn.execute(
+            "UPDATE privilege_lots SET used = used + 1 WHERE id = ? AND used < total",
+            (lot["id"],),
         )
+        if not cur.rowcount:
+            raise ValueError("Не удалось подтвердить привилегию. Повторите сканирование.")
+
+        conn.execute("UPDATE spend_tokens SET used = 1 WHERE token = ?", (token,))
         conn.execute(
             """
             INSERT INTO partner_spend_ops (partner_id, client_id, token, coins)
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, 1)
             """,
-            (partner_id, info["client_id"], token, coins),
+            (partner_id, client_id, token),
         )
-        conn.execute(
-            """
-            INSERT INTO coin_ledger (client_id, delta, source, note)
-            VALUES (?, ?, 'spend', ?)
-            """,
-            (info["client_id"], -coins, f"Списание у партнёра #{partner_id}"),
+        name = partner["business_name"] if partner else f"#{partner_id}"
+        _ledger(
+            conn,
+            client_id,
+            -1,
+            "spend",
+            f"Привилегия у партнёра «{name}»",
+            kind=lot["kind"],
+            partner_id=partner_id,
         )
         conn.commit()
-        balance = conn.execute(
-            "SELECT coins FROM clients WHERE id = ?",
-            (info["client_id"],)
-        ).fetchone()["coins"]
 
     return {
         "ok": True,
-        "coins_spent": coins,
-        "client_balance": int(balance),
         "client_fio": info["client_fio"],
+        "privileges_left": client_card(client_id)["privileges"],
     }
 
 
@@ -950,7 +1406,9 @@ AUDIT_ACTION_LABELS = {
     "block": "Блокировка",
     "unblock": "Разблокировка",
     "reset_password": "Сброс пароля",
-    "add_coins": "Начисление монет",
+    "add_coins": "Начисление (прежняя версия сервиса)",
+    "add_privileges": "Начисление привилегий",
+    "refund_card": "Возврат за клубную карту",
     "create_promo": "Создание промокода",
     "close_promo": "Закрытие промокода",
     "open_promo": "Открытие промокода",
@@ -1020,33 +1478,45 @@ def list_clients_admin() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, fio, phone, email, city, selected_city, coins,
-                   COALESCE(is_blocked, 0) AS is_blocked, created_at
-            FROM clients
-            ORDER BY id DESC
+            SELECT c.id, c.fio, c.phone, c.email, c.city, c.selected_city,
+                   c.card_expires_at,
+                   CASE WHEN c.card_expires_at > datetime('now') THEN (
+                       SELECT COALESCE(SUM(l.total - l.used), 0) FROM privilege_lots l
+                       WHERE l.client_id = c.id AND l.closed_at IS NULL
+                   ) ELSE 0 END AS privileges,
+                   COALESCE(c.is_blocked, 0) AS is_blocked, c.created_at
+            FROM clients c
+            ORDER BY c.id DESC
             """
         ).fetchall()
-    return [
-        {
-            "id": r["id"],
-            "fio": r["fio"],
-            "phone": r["phone"],
-            "email": r["email"],
-            "city": r["city"],
-            "selected_city": r["selected_city"] or r["city"],
-            "coins": int(r["coins"] or 0),
-            "is_blocked": bool(r["is_blocked"]),
-            "created_at": r["created_at"],
-        }
-        for r in rows
-    ]
+    now = _utcnow()
+    result = []
+    for r in rows:
+        expires = _parse(r["card_expires_at"])
+        active = expires is not None and expires > now
+        result.append(
+            {
+                "id": r["id"],
+                "fio": r["fio"],
+                "phone": r["phone"],
+                "email": r["email"],
+                "city": r["city"],
+                "selected_city": r["selected_city"] or r["city"],
+                "card_active": active,
+                "card_expires_at": _iso_utc(r["card_expires_at"]) if active else None,
+                "privileges": int(r["privileges"] or 0),
+                "is_blocked": bool(r["is_blocked"]),
+                "created_at": r["created_at"],
+            }
+        )
+    return result
 
 
 def get_client_admin_detail(client_id: int) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, fio, phone, email, city, selected_city, coins,
+            SELECT id, fio, phone, email, city, selected_city, referred_by,
                    COALESCE(is_blocked, 0) AS is_blocked, created_at
             FROM clients WHERE id = ?
             """,
@@ -1054,20 +1524,23 @@ def get_client_admin_detail(client_id: int) -> dict | None:
         ).fetchone()
         if not row:
             return None
+        card = _card_state(conn, client_id)
+        conn.commit()
         ledger = conn.execute(
             """
-            SELECT id, delta, source, note, created_at, admin_id
-            FROM coin_ledger
+            SELECT id, delta, kind, source, note, created_at, admin_id
+            FROM privilege_ledger
             WHERE client_id = ?
             ORDER BY id DESC
             LIMIT 100
             """,
             (client_id,),
         ).fetchall()
-        purchases = conn.execute(
+        orders = conn.execute(
             """
-            SELECT id, amount, coins_added, created_at
-            FROM coin_orders
+            SELECT id, plan_code, months, privileges, amount, valid_until,
+                   refunded_amount, refunded_at, created_at
+            FROM card_orders
             WHERE client_id = ?
             ORDER BY id DESC
             LIMIT 50
@@ -1083,6 +1556,9 @@ def get_client_admin_detail(client_id: int) -> dict | None:
             """,
             (client_id,),
         ).fetchall()
+        invited = conn.execute(
+            "SELECT COUNT(*) AS c FROM clients WHERE referred_by = ?", (client_id,)
+        ).fetchone()
     return {
         "id": row["id"],
         "fio": row["fio"],
@@ -1090,13 +1566,16 @@ def get_client_admin_detail(client_id: int) -> dict | None:
         "email": row["email"],
         "city": row["city"],
         "selected_city": row["selected_city"] or row["city"],
-        "coins": int(row["coins"] or 0),
         "is_blocked": bool(row["is_blocked"]),
         "created_at": row["created_at"],
+        "referred_by": row["referred_by"],
+        "invited_count": int(invited["c"] or 0),
+        "card": card,
         "ledger": [
             {
                 "id": r["id"],
                 "delta": int(r["delta"]),
+                "kind": r["kind"],
                 "source": r["source"],
                 "note": r["note"] or "",
                 "created_at": r["created_at"],
@@ -1104,19 +1583,23 @@ def get_client_admin_detail(client_id: int) -> dict | None:
             }
             for r in ledger
         ],
-        "purchases": [
+        "orders": [
             {
                 "id": r["id"],
+                "plan_title": CARD_PLANS_BY_CODE.get(r["plan_code"], {}).get("title", r["plan_code"]),
+                "privileges": int(r["privileges"]),
                 "amount": int(r["amount"]),
-                "coins_added": int(r["coins_added"]),
+                "valid_until": r["valid_until"],
+                "refunded_amount": int(r["refunded_amount"] or 0),
+                "refunded_at": r["refunded_at"],
                 "created_at": r["created_at"],
             }
-            for r in purchases
+            for r in orders
         ],
         "promos": [
             {
                 "code": r["code"],
-                "coins": int(r["coins"]),
+                "privileges": int(r["coins"]),
                 "created_at": r["created_at"],
             }
             for r in promos
@@ -1124,50 +1607,145 @@ def get_client_admin_detail(client_id: int) -> dict | None:
     }
 
 
-def admin_add_client_coins(
+def admin_add_client_privileges(
     *,
     admin_id: int,
     client_id: int,
-    coins: int,
+    privileges: int,
+    days: int = 0,
     note: str = "",
-) -> int:
-    coins = int(coins)
-    if coins < 1 or coins > 10000:
-        raise ValueError("Можно начислить от 1 до 10000 монет.")
+) -> dict:
+    """Компенсация по обращению: бонусные привилегии и (или) продление карты."""
+    privileges = int(privileges or 0)
+    days = int(days or 0)
+    if privileges < 0 or privileges > 100:
+        raise ValueError("Привилегий: от 0 до 100.")
+    if days < 0 or days > 365:
+        raise ValueError("Продление: от 0 до 365 дней.")
+    if not privileges and not days:
+        raise ValueError("Укажите число привилегий или дней продления.")
     note_clean = (note or "").strip()
     if len(note_clean) < 3:
         raise ValueError("Укажите причину начисления на русском языке (минимум 3 символа).")
+    now = _utcnow()
     with get_connection() as conn:
         client = conn.execute(
-            "SELECT id, coins FROM clients WHERE id = ?", (client_id,)
+            "SELECT id, card_expires_at FROM clients WHERE id = ?", (client_id,)
         ).fetchone()
         if not client:
             raise ValueError("Клиент не найден.")
-        conn.execute(
-            "UPDATE clients SET coins = coins + ? WHERE id = ?",
-            (coins, client_id),
+        _close_expired_card(conn, client_id, now)
+        expires = _parse(client["card_expires_at"])
+        active = expires is not None and expires > now
+        if days:
+            new_expires = (expires if active else now) + timedelta(days=days)
+            conn.execute(
+                "UPDATE clients SET card_expires_at = ? WHERE id = ?",
+                (_fmt(new_expires), client_id),
+            )
+            active = True
+        if privileges:
+            if not active:
+                raise ValueError(
+                    "Клубная карта не активна — укажите, на сколько дней её открыть."
+                )
+            conn.execute(
+                """
+                INSERT INTO privilege_lots (client_id, kind, source, total, note)
+                VALUES (?, 'bonus', 'admin', ?, ?)
+                """,
+                (client_id, privileges, note_clean),
+            )
+        _ledger(
+            conn,
+            client_id,
+            privileges,
+            "admin",
+            note_clean + (f" (карта продлена на {days} дн.)" if days else ""),
+            kind="bonus" if privileges else "",
+            admin_id=admin_id,
         )
+        parts = []
+        if privileges:
+            parts.append(f"+{privileges} привилегий")
+        if days:
+            parts.append(f"+{days} дн. к карте")
+        _insert_admin_audit(
+            conn,
+            admin_id,
+            "add_privileges",
+            target_type="client",
+            target_id=str(client_id),
+            detail=f"{', '.join(parts)}. {note_clean}",
+        )
+        conn.commit()
+    return client_card(client_id)
+
+
+def admin_refund_client_card(*, admin_id: int, client_id: int, note: str = "") -> dict:
+    """Отказ клиента от клубной карты: возврат за неиспользованные оплаченные привилегии."""
+    now = _utcnow()
+    with get_connection() as conn:
+        if not conn.execute("SELECT id FROM clients WHERE id = ?", (client_id,)).fetchone():
+            raise ValueError("Клиент не найден.")
+        card = _card_state(conn, client_id, now)
+        if not card["active"]:
+            raise ValueError("У клиента нет действующей клубной карты.")
+        lots = conn.execute(
+            """
+            SELECT id, kind, order_id, total, used, price_rub FROM privilege_lots
+            WHERE client_id = ? AND closed_at IS NULL
+            """,
+            (client_id,),
+        ).fetchall()
+        refund_total = 0
+        left_total = 0
+        for lot in lots:
+            left = int(lot["total"]) - int(lot["used"])
+            left_total += left
+            if lot["kind"] != "paid":
+                continue
+            amount = _refund_amount(lot["price_rub"], lot["total"], left)
+            refund_total += amount
+            if lot["order_id"] and amount:
+                conn.execute(
+                    """
+                    UPDATE card_orders
+                    SET refunded_amount = refunded_amount + ?, refunded_at = ?
+                    WHERE id = ?
+                    """,
+                    (amount, _fmt(now), lot["order_id"]),
+                )
         conn.execute(
             """
-            INSERT INTO coin_ledger (client_id, delta, source, admin_id, note)
-            VALUES (?, ?, 'admin', ?, ?)
+            UPDATE privilege_lots SET closed_at = ?, close_reason = 'refund'
+            WHERE client_id = ? AND closed_at IS NULL
             """,
-            (client_id, coins, admin_id, note_clean),
+            (_fmt(now), client_id),
+        )
+        conn.execute(
+            "UPDATE clients SET card_expires_at = ? WHERE id = ?", (_fmt(now), client_id)
+        )
+        note_clean = (note or "").strip()
+        _ledger(
+            conn,
+            client_id,
+            -left_total,
+            "refund",
+            f"Отказ от клубной карты, возврат {refund_total} ₽"
+            + (f". {note_clean}" if note_clean else ""),
+            admin_id=admin_id,
         )
         _insert_admin_audit(
             conn,
             admin_id,
-            "add_coins",
+            "refund_card",
             target_type="client",
             target_id=str(client_id),
-            detail=f"+{coins} монет. {note_clean}",
+            detail=f"Возврат {refund_total} ₽, закрыто привилегий: {left_total}. {note_clean}".strip(),
         )
         conn.commit()
-        return int(
-            conn.execute(
-                "SELECT coins FROM clients WHERE id = ?", (client_id,)
-            ).fetchone()["coins"]
-        )
+    return {"refund_rub": refund_total, "privileges_closed": left_total}
 
 
 def generate_user_password(length: int = 8) -> str:
@@ -1227,8 +1805,9 @@ def list_partners_admin() -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, business_name, category, contact_name, phone, city, address,
-                   comment, spend_coins, COALESCE(is_blocked, 0) AS is_blocked, created_at,
-                   website, description, hours
+                   comment, COALESCE(is_blocked, 0) AS is_blocked, created_at,
+                   website, description, hours, privilege_text,
+                   COALESCE(offer_active, 1) AS offer_active
             FROM partners
             ORDER BY id DESC
             """
@@ -1246,7 +1825,8 @@ def list_partners_admin() -> list[dict]:
             "website": _row_get(r, "website", ""),
             "description": _row_get(r, "description", ""),
             "hours": _row_get(r, "hours", ""),
-            "spend_coins": int(r["spend_coins"] or 1),
+            "privilege_text": _row_get(r, "privilege_text", ""),
+            "offer_active": bool(r["offer_active"]),
             "is_blocked": bool(r["is_blocked"]),
             "created_at": r["created_at"],
         }
@@ -1273,7 +1853,8 @@ def get_partner_admin_detail(partner_id: int) -> dict | None:
             "website": _row_get(row, "website", ""),
             "description": _row_get(row, "description", ""),
             "hours": _row_get(row, "hours", ""),
-            "spend_coins": int(row["spend_coins"] or 1),
+            "privilege_text": _row_get(row, "privilege_text", ""),
+            "offer_active": bool(_row_get(row, "offer_active", 1)),
             "is_blocked": bool(_row_get(row, "is_blocked", 0)),
             "created_at": row["created_at"],
         },
@@ -1328,7 +1909,7 @@ def list_promos_admin() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT p.code, p.coins, p.active, p.max_uses, p.used_count,
+            SELECT p.code, p.coins, p.trial_days, p.active, p.max_uses, p.used_count,
                    COALESCE(p.comment, '') AS comment,
                    p.created_at,
                    (SELECT COUNT(*) FROM promo_redemptions r WHERE r.code = p.code) AS clients_used
@@ -1339,7 +1920,8 @@ def list_promos_admin() -> list[dict]:
     return [
         {
             "code": r["code"],
-            "coins": int(r["coins"]),
+            "privileges": int(r["coins"]),
+            "trial_days": int(r["trial_days"] or PROMO_TRIAL_DAYS_DEFAULT),
             "active": bool(r["active"]),
             "max_uses": r["max_uses"],
             "used_count": int(r["used_count"] or 0),
@@ -1355,16 +1937,20 @@ def create_promo_admin(
     *,
     admin_id: int,
     code: str,
-    coins: int,
+    privileges: int,
+    trial_days: int = PROMO_TRIAL_DAYS_DEFAULT,
     comment: str = "",
     max_uses: int | None = None,
 ) -> dict:
     code_norm = code.strip().upper()
     if not code_norm or len(code_norm) < 3:
         raise ValueError("Промокод: минимум 3 символа.")
-    coins = int(coins)
-    if coins < 1 or coins > 1000:
-        raise ValueError("Монет по промокоду: от 1 до 1000.")
+    privileges = int(privileges)
+    if privileges < 1 or privileges > BONUS_PRIVILEGES_YEAR_CAP:
+        raise ValueError(f"Привилегий по промокоду: от 1 до {BONUS_PRIVILEGES_YEAR_CAP}.")
+    trial_days = int(trial_days or PROMO_TRIAL_DAYS_DEFAULT)
+    if trial_days < 1 or trial_days > 90:
+        raise ValueError("Срок пробной карты: от 1 до 90 дней.")
     if max_uses is not None:
         max_uses = int(max_uses)
         if max_uses < 1:
@@ -1378,10 +1964,11 @@ def create_promo_admin(
             raise ValueError("Такой промокод уже существует.")
         conn.execute(
             """
-            INSERT INTO promo_codes (code, coins, active, max_uses, used_count, comment, created_at)
-            VALUES (?, ?, 1, ?, 0, ?, datetime('now', 'localtime'))
+            INSERT INTO promo_codes
+                (code, coins, trial_days, active, max_uses, used_count, comment, created_at)
+            VALUES (?, ?, ?, 1, ?, 0, ?, datetime('now', 'localtime'))
             """,
-            (code_norm, coins, max_uses, (comment or "").strip()),
+            (code_norm, privileges, trial_days, max_uses, (comment or "").strip()),
         )
         _insert_admin_audit(
             conn,
@@ -1389,7 +1976,10 @@ def create_promo_admin(
             "create_promo",
             target_type="promo",
             target_id=code_norm,
-            detail=f"+{coins} монет. {(comment or '').strip()}".strip(),
+            detail=(
+                f"+{privileges} привилегий, пробная карта {trial_days} дн. "
+                f"{(comment or '').strip()}"
+            ).strip(),
         )
         conn.commit()
         row = conn.execute(
@@ -1397,7 +1987,8 @@ def create_promo_admin(
         ).fetchone()
     return {
         "code": row["code"],
-        "coins": int(row["coins"]),
+        "privileges": int(row["coins"]),
+        "trial_days": int(row["trial_days"]),
         "active": bool(row["active"]),
         "max_uses": row["max_uses"],
         "used_count": int(row["used_count"] or 0),
@@ -1462,19 +2053,33 @@ def admin_stats(date_from: str | None = None, date_to: str | None = None) -> dic
         purchases = conn.execute(
             """
             SELECT
-              COALESCE(SUM(coins_added), 0) AS coins_bought,
+              COALESCE(SUM(privileges), 0) AS privileges_sold,
               COALESCE(SUM(amount), 0) AS cash_rub,
-              COUNT(*) AS purchase_count
-            FROM coin_orders
+              COUNT(*) AS cards_sold
+            FROM card_orders
             WHERE created_at >= ? AND created_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        refunds = conn.execute(
+            """
+            SELECT COALESCE(SUM(refunded_amount), 0) AS refunded_rub
+            FROM card_orders
+            WHERE refunded_at >= ? AND refunded_at <= ?
+            """,
+            (start_ts, end_ts),
+        ).fetchone()
+        bonus = conn.execute(
+            """
+            SELECT COALESCE(SUM(total), 0) AS bonus_granted
+            FROM privilege_lots
+            WHERE kind = 'bonus' AND created_at >= ? AND created_at <= ?
             """,
             (start_ts, end_ts),
         ).fetchone()
         spends = conn.execute(
             """
-            SELECT
-              COALESCE(SUM(coins), 0) AS coins_spent,
-              COUNT(*) AS spend_count
+            SELECT COUNT(*) AS privileges_used
             FROM partner_spend_ops
             WHERE created_at >= ? AND created_at <= ?
             """,
@@ -1507,13 +2112,12 @@ def admin_stats(date_from: str | None = None, date_to: str | None = None) -> dic
               p.id,
               p.business_name,
               p.city,
-              COUNT(o.id) AS ops_count,
-              COALESCE(SUM(o.coins), 0) AS coins_total
+              COUNT(o.id) AS ops_count
             FROM partner_spend_ops o
             JOIN partners p ON p.id = o.partner_id
             WHERE o.created_at >= ? AND o.created_at <= ?
             GROUP BY p.id
-            ORDER BY coins_total DESC, ops_count DESC
+            ORDER BY ops_count DESC
             LIMIT 20
             """,
             (start_ts, end_ts),
@@ -1523,30 +2127,35 @@ def admin_stats(date_from: str | None = None, date_to: str | None = None) -> dic
             SELECT
               (SELECT COUNT(*) FROM clients) AS clients_total,
               (SELECT COUNT(*) FROM partners) AS partners_total,
-              (SELECT COALESCE(SUM(coins), 0) FROM clients) AS coins_in_wallets
+              (SELECT COUNT(*) FROM clients WHERE card_expires_at > datetime('now')) AS active_cards,
+              (SELECT COALESCE(SUM(l.total - l.used), 0)
+                 FROM privilege_lots l JOIN clients c ON c.id = l.client_id
+                 WHERE l.closed_at IS NULL AND c.card_expires_at > datetime('now')
+              ) AS privileges_available
             """
         ).fetchone()
 
     return {
         "period": {"from": start_ts[:10], "to": end_ts[:10]},
-        "coins_bought": int(purchases["coins_bought"] or 0),
+        "cards_sold": int(purchases["cards_sold"] or 0),
         "cash_rub": int(purchases["cash_rub"] or 0),
-        "purchase_count": int(purchases["purchase_count"] or 0),
-        "coins_spent": int(spends["coins_spent"] or 0),
-        "spend_count": int(spends["spend_count"] or 0),
+        "refunded_rub": int(refunds["refunded_rub"] or 0),
+        "privileges_sold": int(purchases["privileges_sold"] or 0),
+        "bonus_granted": int(bonus["bonus_granted"] or 0),
+        "privileges_used": int(spends["privileges_used"] or 0),
         "client_registrations": int(registrations["c"] or 0),
         "partner_registrations": int(partner_regs["c"] or 0),
         "promo_redemptions": int(promo_uses["c"] or 0),
         "clients_total": int(totals["clients_total"] or 0),
         "partners_total": int(totals["partners_total"] or 0),
-        "coins_in_wallets": int(totals["coins_in_wallets"] or 0),
+        "active_cards": int(totals["active_cards"] or 0),
+        "privileges_available": int(totals["privileges_available"] or 0),
         "top_partners": [
             {
                 "id": r["id"],
                 "business_name": r["business_name"],
                 "city": r["city"] or "",
                 "ops_count": int(r["ops_count"] or 0),
-                "coins_total": int(r["coins_total"] or 0),
             }
             for r in top_partners
         ],

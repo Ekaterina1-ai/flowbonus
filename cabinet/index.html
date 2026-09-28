@@ -35,18 +35,18 @@
         <h1>Поток твоих бонусов</h1>
       </div>
       <div class="coins-badge" id="coins-badge">
-        <span>На счёте</span>
+        <span id="card-badge-label">Клубная карта не оформлена</span>
         <strong class="coins-value-row">
           <em id="coins-value">0</em>
-          <img class="coin-icon" src="/assets/coin.svg" alt="монета" />
+          <img class="coin-icon" src="/assets/privilege.svg" alt="привилегий" />
         </strong>
       </div>
     </div>
 
     <nav class="cabinet-tabs" aria-label="Разделы кабинета">
       <button class="cabinet-tab is-active" type="button" data-tab="partners">Партнёры</button>
-      <button class="cabinet-tab" type="button" data-tab="wallet">Личный счёт</button>
-      <button class="cabinet-tab" type="button" data-tab="pay">Пополнить ЛС</button>
+      <button class="cabinet-tab" type="button" data-tab="wallet">Моя карта</button>
+      <button class="cabinet-tab" type="button" data-tab="pay">Оформить карту</button>
     </nav>
 
     <section class="cabinet-panel is-active" id="tab-partners">
@@ -76,31 +76,39 @@
 
     <section class="cabinet-panel" id="tab-wallet">
       <div class="section-head">
-        <h2>Личный счёт</h2>
-        <p>Монеты FlowBonus — внутренняя валюта для второй покупки у партнёров.</p>
+        <h2>Моя клубная карта</h2>
+        <p>Оплачиваете первую позицию у партнёра — вторую той же или меньшей стоимости получаете от него в подарок за 1 привилегию.</p>
       </div>
       <div class="wallet-card">
-        <p>Баланс</p>
+        <p id="card-status">Клубная карта не оформлена</p>
         <p class="wallet-value">
-          <span id="wallet-coins">0</span>
-          <img class="coin-icon coin-icon-lg" src="/assets/coin.svg" alt="монета" />
+          <span id="wallet-privileges">0</span>
+          <img class="coin-icon coin-icon-lg" src="/assets/privilege.svg" alt="привилегий" />
         </p>
-        <p class="form-note">Цена за монету при одной оплате: 1–4 → 100 ₽, 5–9 → 90 ₽, от 10 → 80 ₽.</p>
+        <p class="form-note" id="card-split"></p>
+        <p class="form-note card-reminder" id="card-reminder" hidden></p>
         <div class="btn-row wallet-actions">
-          <button class="btn btn-primary" type="button" data-goto-tab="pay" data-open-pay-panel="card">Пополнить ЛС</button>
-          <button class="btn btn-ghost" type="button" id="spend-btn">Списать</button>
+          <button class="btn btn-primary" type="button" data-goto-tab="pay" data-open-pay-panel="card" id="card-buy-btn">Оформить карту</button>
+          <button class="btn btn-ghost" type="button" id="spend-btn">Использовать привилегию</button>
         </div>
         <p class="form-note" id="spend-status"></p>
+        <p class="form-note" id="card-refund" hidden></p>
       </div>
+
+      <div class="section-head card-history-head">
+        <h2>История</h2>
+        <p>Оформление карт, бонусы, использованные и аннулированные привилегии.</p>
+      </div>
+      <div class="card-history" id="card-history"></div>
     </section>
 
     <section class="cabinet-panel" id="tab-pay">
       <div class="section-head">
-        <h2>Пополнить ЛС</h2>
-        <p>Пополнение личного счёта картой, по приглашению друга или промокодом.</p>
+        <h2>Оформить клубную карту</h2>
+        <p>Новую карту можно оформить и пока действует текущая: срок продлится, а привилегии нового тарифа добавятся сразу.</p>
       </div>
 
-      <div class="pay-icons" role="tablist" aria-label="Способ пополнения">
+      <div class="pay-icons" role="tablist" aria-label="Способ получить привилегии">
         <button class="pay-icon-tab is-active" type="button" role="tab" aria-selected="true" data-pay-panel="card">
           <span class="pay-icon-visual" aria-hidden="true">
             <svg viewBox="0 0 48 48" fill="none">
@@ -111,7 +119,7 @@
               <circle cx="38" cy="29" r="3" fill="currentColor" opacity="0.85"/>
             </svg>
           </span>
-          <span class="pay-icon-label">Картой</span>
+          <span class="pay-icon-label">Клубная карта</span>
         </button>
 
         <button class="pay-icon-tab" type="button" role="tab" aria-selected="false" data-pay-panel="invite">
@@ -139,22 +147,28 @@
       </div>
 
       <div class="pay-panel-content is-active" id="pay-panel-card" role="tabpanel">
-        <p class="form-note"><strong>Демонстрационный режим.</strong> Оплата пока не подключена: деньги не списываются, данные карты не запрашиваются. Монеты начисляются для показа работы сервиса. После подключения платёжного сервиса Продамус оплата будет проходить на его защищённой странице.</p>
+        <p class="form-note"><strong>Демонстрационный режим.</strong> Оплата пока не подключена: деньги не списываются, данные карты не запрашиваются. Клубная карта оформляется для показа работы сервиса. После подключения платёжного сервиса Продамус оплата будет проходить на его защищённой странице.</p>
         <form class="pay-form" id="pay-form">
-          <label>
-            Количество монет
-            <input type="number" id="pay-coins" min="1" max="100" value="1" required />
-          </label>
-          <p class="pay-sum">К оплате: <strong id="pay-amount">100</strong> ₽</p>
-          <p class="form-note" id="pay-pack-hint">1–4 монеты — по 100 ₽ · 5–9 — по 90 ₽ · от 10 — по 80 ₽</p>
-          <button class="btn btn-gold" type="submit">Пополнить (демонстрационный режим)</button>
+          <div class="plan-options" id="plan-options" role="radiogroup" aria-label="Тариф клубной карты"></div>
+          <p class="pay-sum">К оплате: <strong id="pay-amount">0</strong> ₽</p>
+          <p class="form-note" id="pay-plan-hint"></p>
+          <p class="form-note">Оплата разовая, без автопродления. Условия — в <a href="/legal/offer-client.html" target="_blank" rel="noopener">оферте клиенту</a>.</p>
+          <button class="btn btn-gold" type="submit">Оформить карту (демонстрационный режим)</button>
           <p class="form-note" id="pay-status"></p>
         </form>
       </div>
 
       <div class="pay-panel-content" id="pay-panel-invite" role="tabpanel" hidden>
-        <p>Реферальная программа скоро появится: вы получите свой код, друзья присоединятся по нему — и оба получите бонусы.</p>
-        <p class="form-note">Раздел в разработке. Пока это заглушка.</p>
+        <div class="pay-form">
+          <p>Поделитесь личной ссылкой. Когда друг зарегистрируется по ней и впервые оформит клубную карту, вы оба получите по <strong id="invite-bonus">1</strong> бонусной привилегии.</p>
+          <label>
+            Ваша ссылка
+            <input type="text" id="invite-link" readonly />
+          </label>
+          <button class="btn btn-gold" type="button" id="invite-copy-btn">Скопировать ссылку</button>
+          <p class="form-note" id="invite-status"></p>
+          <p class="form-note">Отправляйте ссылку только тем, кто согласен её получить. Бонусные привилегии действуют в течение срока карты и деньгами не возвращаются.</p>
+        </div>
       </div>
 
       <div class="pay-panel-content" id="pay-panel-promo" role="tabpanel" hidden>
@@ -163,6 +177,7 @@
             Промокод
             <input type="text" id="promo-code" placeholder="Введите код" required autocomplete="off" />
           </label>
+          <p class="form-note">Если клубной карты нет, промокод откроет пробную карту. Если карта есть — привилегии добавятся к ней.</p>
           <button class="btn btn-gold" type="submit">Активировать</button>
           <p class="form-note" id="promo-status"></p>
         </form>
@@ -174,15 +189,15 @@
     <div class="modal-backdrop" data-close-modal></div>
     <div class="modal-dialog spend-qr-dialog" role="dialog" aria-modal="true" aria-labelledby="spend-qr-title">
       <button class="modal-close" type="button" data-close-modal aria-label="Закрыть">×</button>
-      <h3 id="spend-qr-title">QR для списания</h3>
-      <p>Покажите этот код партнёру. Он отсканирует QR и спишет монеты с вашего счёта.</p>
+      <h3 id="spend-qr-title">QR для привилегии</h3>
+      <p>Оплатите первую позицию и покажите этот код партнёру. Он отсканирует QR, подтвердит 1 привилегию и выдаст вторую позицию в подарок.</p>
       <div class="spend-qr-box">
         <canvas id="spend-qr-canvas" width="220" height="220"></canvas>
       </div>
       <p class="form-note spend-qr-meta">
         Осталось: <strong id="spend-qr-timer">10:00</strong>
-        · Баланс: <span id="spend-qr-balance">0</span>
-        <img class="coin-icon coin-icon-sm" src="/assets/coin.svg" alt="" />
+        · Привилегий: <span id="spend-qr-balance">0</span>
+        <img class="coin-icon coin-icon-sm" src="/assets/privilege.svg" alt="" />
       </p>
       <p class="form-note" id="spend-qr-expired" hidden>Время вышло. Сгенерируйте новый QR.</p>
       <button class="btn btn-gold" type="button" data-close-modal>Готово</button>
@@ -200,13 +215,13 @@
       <span class="m-tab-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3" fill="currentColor" stroke="none"/></svg>
       </span>
-      <span class="m-tab-label">Счёт</span>
+      <span class="m-tab-label">Карта</span>
     </button>
     <button type="button" class="m-tab" data-tab="pay">
       <span class="m-tab-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>
       </span>
-      <span class="m-tab-label">Пополнить</span>
+      <span class="m-tab-label">Оформить</span>
     </button>
   </nav>
 

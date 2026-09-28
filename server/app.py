@@ -12,17 +12,21 @@ from flask import Flask, jsonify, redirect, request, send_from_directory, sessio
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from db import (
-    add_coins,
+    BONUS_PRIVILEGES_YEAR_CAP,
+    REFERRAL_BONUS_PRIVILEGES,
     add_partner_image,
-    admin_add_client_coins,
+    admin_add_client_privileges,
     admin_count,
     admin_public,
+    admin_refund_client_card,
     admin_reset_client_password,
     admin_reset_partner_password,
     admin_set_client_blocked,
     admin_set_partner_blocked,
     admin_stats,
     bootstrap_or_verify_admin,
+    card_plans_public,
+    client_history,
     client_is_blocked,
     client_public,
     create_client,
@@ -47,6 +51,7 @@ from db import (
     partner_public,
     partner_stats,
     public_landing_snapshot,
+    purchase_card,
     record_consents,
     redeem_promo,
     redeem_spend_token,
@@ -60,63 +65,6 @@ from db import (
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_DIR = Path(__file__).resolve().parent
 DATA_DIR = SERVER_DIR / "data"
-COIN_PRICE_RUB = 100
-
-
-def coin_unit_price(coins: int) -> tuple[int, int]:
-    """Цена за 1 монету и скидка % при единовременной покупке N монет."""
-    if coins >= 10:
-        return 80, 20
-    if coins >= 5:
-        return 90, 10
-    return COIN_PRICE_RUB, 0
-
-
-def coin_purchase_quote(coins: int) -> dict:
-    """Цена покупки по порогам: 1–4 → 100 ₽, 5–9 → 90 ₽, 10+ → 80 ₽."""
-    coins = int(coins)
-    if coins < 1:
-        raise ValueError("Укажите количество монет.")
-    unit_price, discount_pct = coin_unit_price(coins)
-    amount = coins * unit_price
-    base_amount = coins * COIN_PRICE_RUB
-    return {
-        "coins": coins,
-        "amount_rub": amount,
-        "unit_price_rub": unit_price,
-        "discount_pct": discount_pct,
-        "base_amount_rub": base_amount,
-        "tier": True if discount_pct else False,
-    }
-
-
-def coin_pricing_public() -> dict:
-    return {
-        "coin_price_rub": COIN_PRICE_RUB,
-        "coin_tiers": [
-            {
-                "min_coins": 1,
-                "max_coins": 4,
-                "unit_price_rub": 100,
-                "discount_pct": 0,
-                "label": "1–4 монеты",
-            },
-            {
-                "min_coins": 5,
-                "max_coins": 9,
-                "unit_price_rub": 90,
-                "discount_pct": 10,
-                "label": "5–9 монет",
-            },
-            {
-                "min_coins": 10,
-                "max_coins": None,
-                "unit_price_rub": 80,
-                "discount_pct": 20,
-                "label": "10 и более",
-            },
-        ],
-    }
 
 # Фотографии партнёров хранятся вне git-каталога на сервере, см. .env.example.
 BUNDLED_PARTNER_ASSETS = ROOT / "assets" / "partners"
@@ -361,7 +309,7 @@ def legal_files(filename: str):
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, **coin_pricing_public()})
+    return jsonify({"ok": True, "plans": card_plans_public()})
 
 
 @app.get("/api/cities")
@@ -387,7 +335,26 @@ def api_me():
     client = current_client()
     if not client:
         return jsonify({"error": "unauthorized"}), 401
-    return jsonify({"client": client_public(client), **coin_pricing_public()})
+    public = client_public(client)
+    return jsonify(
+        {
+            "client": public,
+            "plans": card_plans_public(),
+            "referral": {
+                "link": f"{request.host_url.rstrip('/')}/clients.html?ref={public['ref_code']}",
+                "bonus_privileges": REFERRAL_BONUS_PRIVILEGES,
+                "year_cap": BONUS_PRIVILEGES_YEAR_CAP,
+            },
+        }
+    )
+
+
+@app.get("/api/history")
+def api_history():
+    client = current_client()
+    if not client:
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"ok": True, "items": client_history(client["id"])})
 
 
 @app.post("/api/register")
@@ -428,6 +395,7 @@ def api_register():
             email=email,
             city=city,
             password=password,
+            ref_code=str(data.get("ref") or ""),
         )
     except Exception as exc:  # noqa: BLE001
         msg = str(exc).lower()
@@ -494,9 +462,9 @@ def api_set_city():
     return jsonify({"ok": True, "client": client_public(refreshed)})
 
 
-@app.post("/api/buy-coins")
-def api_buy_coins():
-    """Демонстрационное пополнение до подключения Продамуса.
+@app.post("/api/buy-card")
+def api_buy_card():
+    """Демонстрационное оформление клубной карты до подключения Продамуса.
 
     Реквизиты карты здесь не принимаются и не должны приниматься: после
     интеграции клиент вводит карту на платёжной странице Продамуса, а сюда
@@ -508,35 +476,22 @@ def api_buy_coins():
 
     data = request.get_json(silent=True) or {}
     try:
-        coins = int(data.get("coins") or 0)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Укажите количество монет."}), 400
+        result = purchase_card(client["id"], str(data.get("plan") or ""))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
-    if coins < 1 or coins > 100:
-        return jsonify({"error": "Можно пополнить от 1 до 100 монет за раз."}), 400
-
-    quote = coin_purchase_quote(coins)
-    amount = quote["amount_rub"]
-    new_balance = add_coins(client["id"], coins, amount, "")
-    if quote["discount_pct"]:
-        message = (
-            f"Демонстрационный режим: начислено {coins} монет "
-            f"на сумму {amount} ₽ (−{quote['discount_pct']}%, "
-            f"по {quote['unit_price_rub']} ₽). Деньги не списаны."
-        )
-    else:
-        message = (
-            f"Демонстрационный режим: начислено {coins} монет "
-            f"на сумму {amount} ₽. Деньги не списаны."
-        )
+    plan = result["plan"]
+    action = "продлена" if result["extended"] else "оформлена"
+    message = (
+        f"Демонстрационный режим: клубная карта «{plan['title']}» {action}, "
+        f"добавлено привилегий: {plan['privileges']}. Деньги не списаны."
+    )
     return jsonify(
         {
             "ok": True,
-            "coins": new_balance,
-            "added": coins,
-            "amount_rub": amount,
-            "unit_price_rub": quote["unit_price_rub"],
-            "discount_pct": quote["discount_pct"],
+            "card": result["card"],
+            "extended": result["extended"],
+            "valid_until": result["valid_until"],
             "message": message,
         }
     )
@@ -553,34 +508,26 @@ def api_promo():
         result = redeem_promo(client["id"], code)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify(
-        {
-            "ok": True,
-            "coins": result["balance"],
-            "added": result["coins_added"],
-            "message": f"Промокод {result['code']} активирован. +{result['coins_added']} монет.",
-        }
+    message = (
+        f"Промокод {result['code']} активирован: открыта пробная клубная карта, "
+        f"привилегий: {result['granted']}."
+        if result["trial_opened"]
+        else f"Промокод {result['code']} активирован: к карте добавлено привилегий: {result['granted']}."
     )
+    return jsonify({"ok": True, "card": result["card"], "message": message})
 
 
 @app.post("/api/spend-qr")
 def api_spend_qr():
-    """Создаёт одноразовый QR-токен для списания монет партнёром."""
+    """Одноразовый QR для подтверждения привилегии у партнёра."""
     client = current_client()
     if not client:
         return jsonify({"error": "unauthorized"}), 401
 
-    token_data = create_spend_token(client["id"], ttl_minutes=10)
-    payload = {
-        "type": "flowbonus_spend",
-        "token": token_data["token"],
-        "client_id": client["id"],
-        "phone": client["phone"],
-        "fio": client["fio"],
-        "coins": client["coins"],
-        "expires_at": token_data["expires_at"],
-    }
-    # URL, который позже откроет кабинет партнёра при сканировании
+    try:
+        token_data = create_spend_token(client["id"], ttl_minutes=10)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     scan_url = f"{request.host_url.rstrip('/')}/partner/scan?token={token_data['token']}"
     return jsonify(
         {
@@ -589,8 +536,7 @@ def api_spend_qr():
             "ttl_minutes": token_data["ttl_minutes"],
             "expires_at": token_data["expires_at"],
             "qr_payload": scan_url,
-            "payload": payload,
-            "balance": client["coins"],
+            "card": token_data["card"],
         }
     )
 
@@ -706,7 +652,8 @@ def api_partner_profile():
         partner["id"],
         city=data.get("city", partner["city"]),
         address=data.get("address", partner["address"]),
-        spend_coins=data.get("spend_coins", partner["spend_coins"]),
+        privilege_text=data.get("privilege_text", _safe_get(partner, "privilege_text", "")),
+        offer_active=data.get("offer_active", _safe_get(partner, "offer_active", 1)),
         comment=data.get("comment", partner["comment"]),
         website=data.get("website", _safe_get(partner, "website", "")),
         description=data.get("description", _safe_get(partner, "description", "")),
@@ -777,11 +724,15 @@ def api_partner_lookup_token():
     token = (data.get("token") or "").strip()
     if "token=" in token:
         token = token.split("token=")[-1].split("&")[0].strip()
+    if not _safe_get(partner, "offer_active", 1):
+        return jsonify(
+            {"error": "Акция приостановлена. Включите её в разделе «Условия акции»."}
+        ), 400
     try:
         info = lookup_spend_token(token)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "spend": info, "suggested_coins": partner["spend_coins"]})
+    return jsonify({"ok": True, "spend": info})
 
 
 @app.post("/api/partner/redeem")
@@ -789,17 +740,18 @@ def api_partner_redeem():
     partner = current_partner()
     if not partner:
         return jsonify({"error": "unauthorized"}), 401
+    if not _safe_get(partner, "offer_active", 1):
+        return jsonify(
+            {"error": "Акция приостановлена. Включите её в разделе «Условия акции»."}
+        ), 400
     data = request.get_json(silent=True) or {}
     token = (data.get("token") or "").strip()
     if "token=" in token:
         token = token.split("token=")[-1].split("&")[0].strip()
     try:
-        coins = int(data.get("coins") or partner["spend_coins"])
-        result = redeem_spend_token(partner_id=partner["id"], token=token, coins=coins)
+        result = redeem_spend_token(partner_id=partner["id"], token=token)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except (TypeError, ValueError):
-        return jsonify({"error": "Некорректное количество монет."}), 400
     return jsonify({**result, "stats": partner_stats(partner["id"])})
 
 
@@ -897,23 +849,40 @@ def api_admin_client_detail(client_id: int):
     return jsonify({"ok": True, "client": detail})
 
 
-@app.post("/api/admin/clients/<int:client_id>/coins")
-def api_admin_client_coins(client_id: int):
+@app.post("/api/admin/clients/<int:client_id>/privileges")
+def api_admin_client_privileges(client_id: int):
     admin, err = require_admin()
     if err:
         return err
     data = request.get_json(silent=True) or {}
     try:
-        coins = int(data.get("coins") or 0)
-        balance = admin_add_client_coins(
+        card = admin_add_client_privileges(
             admin_id=admin["id"],
             client_id=client_id,
-            coins=coins,
+            privileges=int(data.get("privileges") or 0),
+            days=int(data.get("days") or 0),
+            note=str(data.get("note") or ""),
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc) or "Некорректные данные."}), 400
+    return jsonify({"ok": True, "card": card, "client": get_client_admin_detail(client_id)})
+
+
+@app.post("/api/admin/clients/<int:client_id>/refund")
+def api_admin_client_refund(client_id: int):
+    admin, err = require_admin()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    try:
+        result = admin_refund_client_card(
+            admin_id=admin["id"],
+            client_id=client_id,
             note=str(data.get("note") or ""),
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "coins": balance, "client": get_client_admin_detail(client_id)})
+    return jsonify({"ok": True, **result, "client": get_client_admin_detail(client_id)})
 
 
 @app.post("/api/admin/clients/<int:client_id>/password")
@@ -1028,14 +997,13 @@ def api_admin_create_promo():
         promo = create_promo_admin(
             admin_id=admin["id"],
             code=str(data.get("code") or ""),
-            coins=int(data.get("coins") or 0),
+            privileges=int(data.get("privileges") or 0),
+            trial_days=int(data.get("trial_days") or 0),
             comment=str(data.get("comment") or ""),
             max_uses=max_uses,
         )
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except (TypeError, ValueError):
-        return jsonify({"error": "Некорректные данные промокода."}), 400
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc) or "Некорректные данные промокода."}), 400
     return jsonify({"ok": True, "promo": promo})
 
 

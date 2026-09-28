@@ -28,19 +28,126 @@ function formatPhone(phone) {
 
 const state = {
   client: null,
+  card: null,
+  plans: [],
+  selectedPlan: "m3",
   cities: [],
   selectedCity: "",
-  coinPrice: 100,
-  coinTiers: [
-    { min_coins: 1, max_coins: 4, unit_price_rub: 100, discount_pct: 0 },
-    { min_coins: 5, max_coins: 9, unit_price_rub: 90, discount_pct: 10 },
-    { min_coins: 10, max_coins: null, unit_price_rub: 80, discount_pct: 20 },
-  ],
 };
 
-function setCoins(value) {
-  document.getElementById("coins-value").textContent = value;
-  document.getElementById("wallet-coins").textContent = value;
+function formatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function pluralRu(n, one, few, many) {
+  const abs = Math.abs(Number(n)) || 0;
+  const mod10 = abs % 10;
+  const mod100 = abs % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+function privilegesWord(n) {
+  return pluralRu(n, "привилегия", "привилегии", "привилегий");
+}
+
+function formatRub(n) {
+  return `${new Intl.NumberFormat("ru-RU").format(Number(n) || 0)} ₽`;
+}
+
+function renderCard(card) {
+  state.card = card || { active: false, privileges: 0 };
+  const c = state.card;
+  const count = c.active ? c.privileges : 0;
+
+  document.getElementById("coins-value").textContent = count;
+  document.getElementById("wallet-privileges").textContent = count;
+  document.getElementById("card-badge-label").textContent = c.active
+    ? `Карта до ${formatDate(c.expires_at)} · привилегий`
+    : "Клубная карта не оформлена";
+
+  document.getElementById("card-status").textContent = c.active
+    ? `Клубная карта активна до ${formatDate(c.expires_at)} · осталось ${c.days_left} ${pluralRu(c.days_left, "день", "дня", "дней")}`
+    : "Клубная карта не оформлена. Оформите карту или активируйте промокод.";
+
+  const split = document.getElementById("card-split");
+  split.textContent = c.active
+    ? `Оплаченных: ${c.paid_privileges} · бонусных: ${c.bonus_privileges}. Бонусные расходуются первыми.`
+    : "";
+
+  const reminder = document.getElementById("card-reminder");
+  reminder.hidden = !c.reminder;
+  reminder.textContent = c.reminder
+    ? `Карта закончится ${formatDate(c.expires_at)}. Неиспользованные привилегии (${c.privileges}) сгорят вместе с ней — используйте их или оформите новую карту: срок продлится, привилегии сохранятся.`
+    : "";
+
+  const refund = document.getElementById("card-refund");
+  if (c.active && c.refund_rub > 0) {
+    refund.hidden = false;
+    refund.innerHTML = `При отказе от карты сейчас вам вернут <strong>${formatRub(c.refund_rub)}</strong> за неиспользованные оплаченные привилегии. Заявление — на <a href="mailto:katerina7959@yandex.ru">katerina7959@yandex.ru</a>, порядок — в <a href="/legal/offer-client.html#refund" target="_blank" rel="noopener">оферте</a>.`;
+  } else {
+    refund.hidden = true;
+    refund.textContent = "";
+  }
+
+  document.getElementById("card-buy-btn").textContent = c.active ? "Продлить карту" : "Оформить карту";
+  updatePayQuote();
+}
+
+async function refreshCard() {
+  try {
+    const data = await api("/api/me");
+    state.client = data.client;
+    renderCard(data.client.card);
+    loadHistory();
+  } catch (_) {
+    /* обновится при следующем открытии кабинета */
+  }
+}
+
+async function loadHistory() {
+  const list = document.getElementById("card-history");
+  if (!list) return;
+  try {
+    const data = await api("/api/history");
+    const items = data.items || [];
+    if (!items.length) {
+      list.innerHTML = `<p class="form-note">Пока нет операций.</p>`;
+      return;
+    }
+    list.innerHTML = items
+      .map((i) => {
+        const sign = i.delta > 0 ? "+" : "";
+        const cls = i.delta > 0 ? " is-plus" : "";
+        return `<div class="card-history-item">
+          <div>
+            <div>${escapeHtml(i.note)}</div>
+            <div class="form-note">${escapeHtml(formatDateTime(i.created_at))}</div>
+          </div>
+          <strong class="${cls.trim()}">${i.delta ? `${sign}${i.delta}` : "—"}</strong>
+        </div>`;
+      })
+      .join("");
+  } catch (err) {
+    list.innerHTML = `<p class="form-note">${escapeHtml(err.message)}</p>`;
+  }
 }
 
 function setSelectedCityUI(city) {
@@ -114,6 +221,7 @@ function activateTab(name, options = {}) {
     panel.classList.toggle("is-active", panel.id === `tab-${name}`);
   });
   if (name === "partners") loadPartners();
+  if (name === "wallet") loadHistory();
   if (name === "pay" && options.openPanel) {
     openPayPanel(options.openPanel);
   }
@@ -149,47 +257,65 @@ function bindPayIcons() {
 async function loadMe() {
   const data = await api("/api/me");
   state.client = data.client;
-  state.coinPrice = data.coin_price_rub || 100;
-  if (Array.isArray(data.coin_tiers) && data.coin_tiers.length) {
-    state.coinTiers = data.coin_tiers;
+  state.plans = Array.isArray(data.plans) ? data.plans : [];
+  if (!state.plans.some((p) => p.code === state.selectedPlan) && state.plans.length) {
+    state.selectedPlan = state.plans[0].code;
   }
   document.getElementById("user-name").textContent = state.client.fio;
   setSelectedCityUI(state.client.selected_city || "");
+  renderPlans();
+  renderCard(state.client.card);
+
+  const referral = data.referral || {};
+  const linkInput = document.getElementById("invite-link");
+  if (linkInput) linkInput.value = referral.link || "";
+  const bonusEl = document.getElementById("invite-bonus");
+  if (bonusEl && referral.bonus_privileges) bonusEl.textContent = referral.bonus_privileges;
+}
+
+function addMonths(date, months) {
+  const d = new Date(date.getTime());
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+  return d;
+}
+
+function renderPlans() {
+  const root = document.getElementById("plan-options");
+  if (!root) return;
+  root.innerHTML = state.plans
+    .map((p) => {
+      const active = p.code === state.selectedPlan;
+      return `<label class="plan-option${active ? " is-active" : ""}">
+        <input type="radio" name="plan" value="${escapeHtml(p.code)}" ${active ? "checked" : ""} />
+        <span class="plan-option-text">
+          <span class="plan-option-title">${escapeHtml(p.title)}</span>
+          <span class="plan-option-meta">${p.privileges} ${privilegesWord(p.privileges)} на срок карты</span>
+        </span>
+        <span class="plan-option-price">${formatRub(p.price_rub)}</span>
+      </label>`;
+    })
+    .join("");
   updatePayQuote();
-  setCoins(state.client.coins);
-}
-
-function unitPriceFor(coins) {
-  const n = Math.max(1, Number(coins) || 1);
-  if (n >= 10) return { unit: 80, discount: 20 };
-  if (n >= 5) return { unit: 90, discount: 10 };
-  return { unit: state.coinPrice || 100, discount: 0 };
-}
-
-function quotePurchase(coins) {
-  const n = Math.max(1, Math.min(100, Number(coins) || 1));
-  const { unit, discount } = unitPriceFor(n);
-  return {
-    coins: n,
-    amount: n * unit,
-    unit,
-    discount,
-  };
 }
 
 function updatePayQuote() {
-  const coinsInput = document.getElementById("pay-coins");
   const amountEl = document.getElementById("pay-amount");
-  const hintEl = document.getElementById("pay-pack-hint");
-  if (!coinsInput || !amountEl) return;
-  const q = quotePurchase(coinsInput.value);
-  amountEl.textContent = String(q.amount);
-  if (hintEl) {
-    if (q.discount) {
-      hintEl.textContent = `${q.coins} монет × ${q.unit} ₽ (−${q.discount}%) · к оплате ${q.amount} ₽`;
-    } else {
-      hintEl.textContent = `1–4 монеты — по ${state.coinPrice} ₽ · 5–9 — по 90 ₽ · от 10 — по 80 ₽`;
-    }
+  const hintEl = document.getElementById("pay-plan-hint");
+  const plan = state.plans.find((p) => p.code === state.selectedPlan);
+  if (!amountEl || !plan) return;
+  amountEl.textContent = new Intl.NumberFormat("ru-RU").format(plan.price_rub);
+  if (!hintEl) return;
+  const card = state.card || {};
+  if (card.active && card.expires_at) {
+    const until = addMonths(new Date(card.expires_at), plan.months);
+    hintEl.textContent = `Текущая карта продлится до ${formatDate(until.toISOString())}, ещё ${plan.privileges} ${privilegesWord(plan.privileges)} добавятся сразу.`;
+  } else {
+    const until = addMonths(new Date(), plan.months);
+    hintEl.textContent = `Карта будет действовать до ${formatDate(until.toISOString())}: ${plan.privileges} ${privilegesWord(plan.privileges)}.`;
   }
 }
 
@@ -258,7 +384,7 @@ async function loadPartners() {
           : "";
       const hoursPhone = [p.hours, p.phone].filter(Boolean).join(" · ");
       const cityLabel = (p.city || city || "").trim().toUpperCase();
-      const spend = p.spend_coins ?? 2;
+      const privilege = (p.privilege_text || "").trim() || "Вторая позиция той же или меньшей стоимости — в подарок";
       return `
       <article class="partner-card">
         <div class="partner-visual" data-carousel>
@@ -277,12 +403,13 @@ async function loadPartners() {
             <div class="partner-card-side">
               ${p.address ? `<p class="partner-card-addr">${escapeHtml(p.address)}</p>` : ""}
               ${hoursPhone ? `<p class="partner-card-hours">${escapeHtml(hoursPhone)}</p>` : ""}
+              <p class="partner-card-privilege">${escapeHtml(privilege)}</p>
             </div>
-            <div class="partner-limit-box" title="Сколько монет списывается у партнёра">
-              <span class="partner-limit-label">Списание</span>
+            <div class="partner-limit-box" title="За 1 привилегию клубной карты — вторая позиция в подарок">
+              <span class="partner-limit-label">Подарок за</span>
               <div class="partner-limit-value">
-                <strong>${spend}</strong>
-                <img class="coin-icon" src="/assets/coin.svg" alt="монета" />
+                <strong>1</strong>
+                <img class="coin-icon" src="/assets/privilege.svg" alt="привилегию" />
               </div>
             </div>
           </div>
@@ -397,30 +524,51 @@ function bindCity() {
 }
 
 function bindPay() {
-  const coinsInput = document.getElementById("pay-coins");
-
-  coinsInput.addEventListener("input", () => {
+  const options = document.getElementById("plan-options");
+  options.addEventListener("change", (event) => {
+    const input = event.target.closest("input[name='plan']");
+    if (!input) return;
+    state.selectedPlan = input.value;
+    options.querySelectorAll(".plan-option").forEach((label) => {
+      label.classList.toggle("is-active", label.contains(input));
+    });
     updatePayQuote();
   });
 
   document.getElementById("pay-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const status = document.getElementById("pay-status");
+    const button = event.target.querySelector('button[type="submit"]');
     status.textContent = "";
+    button.disabled = true;
     try {
-      const data = await api("/api/buy-coins", {
+      const data = await api("/api/buy-card", {
         method: "POST",
-        body: JSON.stringify({
-          coins: Number(coinsInput.value),
-        }),
+        body: JSON.stringify({ plan: state.selectedPlan }),
       });
-      setCoins(data.coins);
+      renderCard(data.card);
       status.textContent = data.message;
-      document.getElementById("pay-form").reset();
-      coinsInput.value = "1";
-      updatePayQuote();
     } catch (err) {
       status.textContent = err.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function bindInvite() {
+  const btn = document.getElementById("invite-copy-btn");
+  const input = document.getElementById("invite-link");
+  const status = document.getElementById("invite-status");
+  if (!btn || !input) return;
+  btn.addEventListener("click", async () => {
+    status.textContent = "";
+    try {
+      await navigator.clipboard.writeText(input.value);
+      status.textContent = "Ссылка скопирована.";
+    } catch (_) {
+      input.select();
+      status.textContent = "Выделите ссылку и скопируйте её вручную.";
     }
   });
 }
@@ -444,7 +592,10 @@ function closeModal(modal) {
   if (!modal) return;
   modal.hidden = true;
   modal.setAttribute("aria-hidden", "true");
-  if (modal.id === "spend-qr-modal") stopSpendCountdown();
+  if (modal.id === "spend-qr-modal") {
+    stopSpendCountdown();
+    refreshCard();
+  }
   if (!document.querySelector(".modal:not([hidden])")) {
     document.body.classList.remove("modal-open");
   }
@@ -515,7 +666,7 @@ function bindSpend() {
         body: "{}",
       });
 
-      document.getElementById("spend-qr-balance").textContent = data.balance ?? state.client?.coins ?? 0;
+      document.getElementById("spend-qr-balance").textContent = data.card?.privileges ?? 0;
 
       const canvas = document.getElementById("spend-qr-canvas");
       if (typeof QRious === "undefined") {
@@ -552,8 +703,7 @@ function bindPromo() {
         method: "POST",
         body: JSON.stringify({ code: input.value }),
       });
-      setCoins(data.coins);
-      if (state.client) state.client.coins = data.coins;
+      renderCard(data.card);
       status.textContent = data.message;
       input.value = "";
     } catch (err) {
@@ -570,6 +720,7 @@ async function boot() {
     bindCity();
     bindPay();
     bindPayIcons();
+    bindInvite();
     bindPromo();
     bindSpend();
     bindModals();

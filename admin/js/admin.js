@@ -42,6 +42,13 @@ function formatDate(iso) {
   return s;
 }
 
+function formatDay(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  return d.toLocaleDateString("ru-RU");
+}
+
 function todayISO() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
@@ -101,17 +108,19 @@ async function loadMe() {
 
 function renderStatCards(stats) {
   const items = [
-    { label: "Куплено монет", value: stats.coins_bought },
-    { label: "В кассе (к оплате)", value: formatMoney(stats.cash_rub) },
-    { label: "Покупок", value: stats.purchase_count },
-    { label: "Списано монет", value: stats.coins_spent },
-    { label: "Списаний", value: stats.spend_count },
+    { label: "Оформлено карт", value: stats.cards_sold },
+    { label: "Выручка за карты", value: formatMoney(stats.cash_rub) },
+    { label: "Возвраты", value: formatMoney(stats.refunded_rub) },
+    { label: "Привилегий продано", value: stats.privileges_sold },
+    { label: "Бонусных привилегий", value: stats.bonus_granted },
+    { label: "Привилегий использовано", value: stats.privileges_used },
     { label: "Рег. клиентов", value: stats.client_registrations },
     { label: "Рег. партнёров", value: stats.partner_registrations },
     { label: "Активаций промо", value: stats.promo_redemptions },
     { label: "Клиентов всего", value: stats.clients_total },
     { label: "Партнёров всего", value: stats.partners_total },
-    { label: "Монет на счетах", value: stats.coins_in_wallets },
+    { label: "Действующих карт", value: stats.active_cards },
+    { label: "Доступно привилегий", value: stats.privileges_available },
   ];
   document.getElementById("stats-cards").innerHTML = items
     .map(
@@ -133,7 +142,6 @@ function renderStatCards(stats) {
         <td>${escapeHtml(p.business_name)}</td>
         <td>${escapeHtml(p.city || "—")}</td>
         <td>${p.ops_count}</td>
-        <td>${p.coins_total}</td>
       </tr>`
     )
     .join("");
@@ -192,7 +200,11 @@ async function loadClients() {
         <td>${escapeHtml(c.fio)}</td>
         <td>${escapeHtml(c.phone)}</td>
         <td>${escapeHtml(c.selected_city || c.city)}</td>
-        <td>${c.coins}</td>
+        <td>${
+          c.card_active
+            ? `до ${escapeHtml(formatDay(c.card_expires_at))} · ${c.privileges} прив.`
+            : '<span style="color:var(--muted)">нет</span>'
+        }</td>
         <td>${
           c.is_blocked
             ? '<span class="admin-badge admin-badge-off">Заблокирован</span>'
@@ -211,10 +223,14 @@ async function loadClients() {
 function sourceLabel(source) {
   return (
     {
-      purchase: "Покупка",
+      purchase: "Клубная карта",
       promo: "Промокод",
+      referral: "Приглашение",
       admin: "Админ",
-      spend: "Списание",
+      spend: "Привилегия у партнёра",
+      expire: "Окончание срока карты",
+      refund: "Отказ от карты",
+      migration: "Перенос из прежней версии",
     }[source] || source
   );
 }
@@ -223,6 +239,7 @@ async function openClientModal(clientId) {
   state.currentClientId = clientId;
   const data = await api(`/api/admin/clients/${clientId}`);
   const c = data.client;
+  const card = c.card || {};
   document.getElementById("client-modal-title").textContent = `Клиент #${c.id}`;
   const body = document.getElementById("client-modal-body");
   body.innerHTML = `
@@ -232,21 +249,47 @@ async function openClientModal(clientId) {
       <dt>Email</dt><dd>${escapeHtml(c.email)}</dd>
       <dt>Город регистрации</dt><dd>${escapeHtml(c.city)}</dd>
       <dt>Выбранный город</dt><dd>${escapeHtml(c.selected_city)}</dd>
-      <dt>Баланс</dt><dd>${c.coins} монет</dd>
+      <dt>Клубная карта</dt><dd>${
+        card.active
+          ? `действует до ${escapeHtml(formatDay(card.expires_at))} (осталось ${card.days_left} дн.)`
+          : "нет действующей карты"
+      }</dd>
+      <dt>Привилегий</dt><dd>${
+        card.active
+          ? `${card.privileges} (оплаченных ${card.paid_privileges}, бонусных ${card.bonus_privileges})`
+          : "0"
+      }</dd>
+      <dt>К возврату при отказе</dt><dd>${card.active ? formatMoney(card.refund_rub) : "—"}</dd>
+      <dt>Пригласил друзей</dt><dd>${c.invited_count}</dd>
+      <dt>Приглашён клиентом</dt><dd>${c.referred_by ? `#${c.referred_by}` : "—"}</dd>
       <dt>Статус</dt><dd>${c.is_blocked ? "Заблокирован" : "Доступен"}</dd>
       <dt>Регистрация</dt><dd>${escapeHtml(formatDate(c.created_at))}</dd>
     </dl>
     <div class="admin-actions">
-      <form class="pay-form" id="client-coins-form">
-        <label>Начислить монеты
-          <input type="number" id="client-coins-amount" min="1" max="10000" value="1" required />
+      <form class="pay-form" id="client-privileges-form">
+        <label>Бонусных привилегий
+          <input type="number" id="client-privileges-amount" min="0" max="100" value="1" />
+        </label>
+        <label>Продлить карту, дней${card.active ? " (необязательно)" : " (обязательно, карты нет)"}
+          <input type="number" id="client-privileges-days" min="0" max="365" value="${card.active ? 0 : 30}" />
         </label>
         <label>Причина начисления (на русском)
-          <input type="text" id="client-coins-note" maxlength="200" minlength="3" required placeholder="Например: компенсация за ошибку" />
+          <input type="text" id="client-privileges-note" maxlength="200" minlength="3" required placeholder="Например: компенсация по обращению" />
         </label>
         <button class="btn btn-primary" type="submit">Начислить</button>
-        <p class="form-note" id="client-coins-status"></p>
+        <p class="form-note" id="client-privileges-status"></p>
       </form>
+      ${
+        card.active
+          ? `<div class="pay-form" id="client-refund-block">
+        <label>Комментарий к возврату
+          <input type="text" id="client-refund-note" maxlength="200" placeholder="Например: заявление клиента от 28.09" />
+        </label>
+        <button class="btn btn-ghost" type="button" id="client-refund-btn">Оформить отказ от карты (${formatMoney(card.refund_rub)})</button>
+        <p class="form-note" id="client-refund-status">Возвращается стоимость неиспользованных оплаченных привилегий. Бонусные не возвращаются. Деньги переведите клиенту вручную и оформите чек возврата в «Мой налог».</p>
+      </div>`
+          : ""
+      }
       <div class="pay-form" id="client-password-block">
         <label>Текущий пароль
           <input type="text" id="client-current-password" readonly placeholder="Нажмите «Сбросить пароль»" autocomplete="off" />
@@ -263,7 +306,30 @@ async function openClientModal(clientId) {
       </div>
       <p class="form-note" id="client-block-status"></p>
     </div>
-    <div class="section-head" style="margin-top:1rem"><h3>История монет</h3></div>
+    <div class="section-head" style="margin-top:1rem"><h3>Клубные карты</h3></div>
+    <div class="admin-ledger">
+      <table>
+        <thead><tr><th>Когда</th><th>Тариф</th><th>Привилегий</th><th>Сумма</th><th>Возврат</th></tr></thead>
+        <tbody>
+          ${
+            c.orders.length
+              ? c.orders
+                  .map(
+                    (o) => `<tr>
+                      <td>${escapeHtml(formatDate(o.created_at))}</td>
+                      <td>${escapeHtml(o.plan_title)}</td>
+                      <td>${o.privileges}</td>
+                      <td>${formatMoney(o.amount)}</td>
+                      <td>${o.refunded_amount ? formatMoney(o.refunded_amount) : "—"}</td>
+                    </tr>`
+                  )
+                  .join("")
+              : "<tr><td colspan='5'>Карт не оформлялось</td></tr>"
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="section-head" style="margin-top:1rem"><h3>История привилегий</h3></div>
     <div class="admin-ledger">
       <table>
         <thead><tr><th>Когда</th><th>Источник</th><th>Δ</th><th>Заметка</th></tr></thead>
@@ -288,25 +354,46 @@ async function openClientModal(clientId) {
   `;
   document.getElementById("client-modal").hidden = false;
 
-  document.getElementById("client-coins-form").addEventListener("submit", async (e) => {
+  document.getElementById("client-privileges-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const status = document.getElementById("client-coins-status");
+    const status = document.getElementById("client-privileges-status");
     status.textContent = "";
     try {
-      await api(`/api/admin/clients/${clientId}/coins`, {
+      await api(`/api/admin/clients/${clientId}/privileges`, {
         method: "POST",
         body: JSON.stringify({
-          coins: Number(document.getElementById("client-coins-amount").value),
-          note: document.getElementById("client-coins-note").value.trim(),
+          privileges: Number(document.getElementById("client-privileges-amount").value) || 0,
+          days: Number(document.getElementById("client-privileges-days").value) || 0,
+          note: document.getElementById("client-privileges-note").value.trim(),
         }),
       });
-      status.textContent = "Монеты начислены.";
       await openClientModal(clientId);
       loadClients();
     } catch (err) {
       status.textContent = err.message;
     }
   });
+
+  const refundBtn = document.getElementById("client-refund-btn");
+  if (refundBtn) {
+    refundBtn.addEventListener("click", async () => {
+      const status = document.getElementById("client-refund-status");
+      if (!window.confirm(`Оформить отказ клиента от клубной карты? К возврату: ${formatMoney(card.refund_rub)}. Все привилегии на карте будут закрыты.`)) {
+        return;
+      }
+      try {
+        const res = await api(`/api/admin/clients/${clientId}/refund`, {
+          method: "POST",
+          body: JSON.stringify({ note: document.getElementById("client-refund-note").value.trim() }),
+        });
+        await openClientModal(clientId);
+        loadClients();
+        window.alert(`Карта закрыта. Верните клиенту ${formatMoney(res.refund_rub)} и оформите чек возврата в «Мой налог».`);
+      } catch (err) {
+        status.textContent = err.message;
+      }
+    });
+  }
 
   document.getElementById("client-reset-password-btn").addEventListener("click", async () => {
     const status = document.getElementById("client-password-status");
@@ -400,8 +487,9 @@ async function openPartnerModal(partnerId) {
       <dt>Телефон</dt><dd>${escapeHtml(p.phone)}</dd>
       <dt>Город</dt><dd>${escapeHtml(p.city || "—")}</dd>
       <dt>Адрес</dt><dd>${escapeHtml(p.address || "—")}</dd>
-      <dt>Монет за визит</dt><dd>${p.spend_coins}</dd>
-      <dt>Списано всего</dt><dd>${p.stats.coins_total} (${p.stats.ops_count} опер.)</dd>
+      <dt>Подарок за привилегию</dt><dd>${escapeHtml(p.privilege_text || "Вторая позиция той же или меньшей стоимости — в подарок")}</dd>
+      <dt>Акция</dt><dd>${p.offer_active ? "Активна" : "Приостановлена партнёром"}</dd>
+      <dt>Привилегий подтверждено</dt><dd>${p.stats.ops_count}</dd>
       <dt>Статус</dt><dd>${p.is_blocked ? "Заблокирован" : "Доступен"}</dd>
       <dt>Регистрация</dt><dd>${escapeHtml(formatDate(p.created_at))}</dd>
     </dl>
@@ -484,7 +572,8 @@ async function loadPromos() {
     .map(
       (p) => `<tr>
         <td><strong>${escapeHtml(p.code)}</strong></td>
-        <td>${p.coins}</td>
+        <td>${p.privileges}</td>
+        <td>${p.trial_days}</td>
         <td>${p.used_count}${p.max_uses != null ? ` / ${p.max_uses}` : ""} <span style="color:var(--muted)">(${p.clients_used} кл.)</span></td>
         <td>${escapeHtml(p.comment || "—")}</td>
         <td>${
@@ -540,7 +629,8 @@ function bindPromos() {
         method: "POST",
         body: JSON.stringify({
           code: document.getElementById("promo-code").value,
-          coins: Number(document.getElementById("promo-coins").value),
+          privileges: Number(document.getElementById("promo-privileges").value),
+          trial_days: Number(document.getElementById("promo-trial-days").value),
           comment: document.getElementById("promo-comment").value,
           max_uses: maxUsesRaw === "" ? null : Number(maxUsesRaw),
         }),

@@ -43,6 +43,20 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   const params = new URLSearchParams(location.search);
+  const ref = (params.get("ref") || "").trim();
+  if (ref) {
+    try {
+      sessionStorage.setItem("fb_ref", ref);
+    } catch (_) {
+      /* приватный режим браузера */
+    }
+    const registerModal = document.getElementById("client-register");
+    if (registerModal) {
+      registerModal.hidden = false;
+      registerModal.setAttribute("aria-hidden", "false");
+      document.body.classList.add("modal-open");
+    }
+  }
   if (params.get("login") === "partner") {
     const loginModal = document.getElementById("client-login");
     if (loginModal) {
@@ -104,6 +118,12 @@ function initAuthForms() {
         return;
       }
       button.disabled = true;
+      let ref = "";
+      try {
+        ref = sessionStorage.getItem("fb_ref") || "";
+      } catch (_) {
+        ref = "";
+      }
       try {
         const data = await api("/api/register", {
           method: "POST",
@@ -117,8 +137,14 @@ function initAuthForms() {
             accept_terms: true,
             accept_pd: true,
             accept_marketing: Boolean(fd.get("accept_marketing")),
+            ref,
           }),
         });
+        try {
+          sessionStorage.removeItem("fb_ref");
+        } catch (_) {
+          /* ignore */
+        }
         window.location.href = data.redirect || "/cabinet/";
       } catch (err) {
         errorEl.textContent = err.message;
@@ -328,7 +354,8 @@ function renderNetworkCard(partner) {
     ? partner.images
     : [partner.image || "/assets/partners/norma-tela.png"]
   ).filter(Boolean);
-  const spend = Math.max(1, Number(partner.spend_coins) || 1);
+  const privilege =
+    (partner.privilege_text || "").trim() || "Вторая позиция той же или меньшей стоимости — в подарок";
   const city = partner.city || "Город уточняется";
   const category = partner.category || "Партнёр";
   const desc = (partner.description || "").trim();
@@ -374,11 +401,11 @@ function renderNetworkCard(partner) {
         </svg>
         <span class="network-divider-line"></span>
       </div>
-      <div class="network-spend" title="Сколько монет клиент может списать у партнёра за визит">
-        <span class="network-spend-label">Клиент может списать за визит</span>
-        <div class="network-spend-value" data-spend="${spend}">
-          <strong>${spend}</strong>
-          <img src="/assets/coin.svg" alt="" />
+      <div class="network-spend" title="За 1 привилегию клубной карты FlowBonus">
+        <span class="network-spend-label">${escapeHtml(privilege)} — за</span>
+        <div class="network-spend-value" data-spend="1">
+          <strong>1</strong>
+          <img src="/assets/privilege.svg" alt="привилегию" />
         </div>
       </div>
     </div>
@@ -513,7 +540,7 @@ async function initNetworkShowcase() {
       lead.textContent =
         partners.length === 1
           ? "Скоро добавятся новые точки в вашем городе!"
-          : "Реальные точки, куда можно прийти с монетами FlowBonus.";
+          : "Реальные точки, куда можно прийти с клубной картой FlowBonus.";
     }
 
     grid.classList.toggle("is-single", partners.length === 1);
@@ -523,7 +550,7 @@ async function initNetworkShowcase() {
 
   const partnerSignature = (partners) =>
     (partners || [])
-      .map((p) => `${p.partner_id || p.id}:${(p.images || []).length}:${p.spend_coins}:${p.name}`)
+      .map((p) => `${p.partner_id || p.id}:${(p.images || []).length}:${p.privilege_text || ""}:${p.name}`)
       .join("|");
 
   try {

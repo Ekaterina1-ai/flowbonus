@@ -89,16 +89,42 @@ function activateTab(name) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+}
+
 function renderStats(stats) {
   state.stats = stats;
-  document.getElementById("stats-coins").textContent = stats.coins_total || 0;
+  document.getElementById("stats-coins").textContent = stats.ops_count || 0;
   document.getElementById("stats-ops").textContent = stats.ops_count || 0;
-  document.getElementById("stats-coins-2").textContent = stats.coins_total || 0;
 
   const list = document.getElementById("recent-list");
   const recent = stats.recent || [];
   if (!recent.length) {
-    list.innerHTML = `<p class="form-note">Пока нет списаний. Отсканируйте первый QR клиента.</p>`;
+    list.innerHTML = `<p class="form-note">Пока нет подтверждённых привилегий. Отсканируйте первый QR клиента.</p>`;
     return;
   }
   list.innerHTML = recent
@@ -106,10 +132,10 @@ function renderStats(stats) {
       (r) => `
       <div class="recent-item">
         <div>
-          <div>${r.client_fio}</div>
-          <div class="form-note">${r.client_phone} · ${r.created_at}</div>
+          <div>${escapeHtml(r.client_fio)}</div>
+          <div class="form-note">${escapeHtml(r.client_phone)} · ${escapeHtml(formatDateTime(r.created_at))}</div>
         </div>
-        <strong>-${r.coins}</strong>
+        <strong>1 привилегия</strong>
       </div>`
     )
     .join("");
@@ -118,7 +144,8 @@ function renderStats(stats) {
 function fillProfile(partner) {
   document.getElementById("partner-name").textContent = partner.contact_name;
   document.getElementById("business-title").textContent = partner.business_name;
-  document.getElementById("offer-spend-coins").value = partner.spend_coins || 2;
+  document.getElementById("offer-privilege-text").value = partner.privilege_text || "";
+  document.getElementById("offer-active").checked = partner.offer_active !== false && partner.offer_active !== 0;
   document.getElementById("profile-business").value = partner.business_name || "";
   ensureCategoryOption(partner.category || "");
   setSelectedCityUI(partner.city || "");
@@ -232,16 +259,11 @@ async function prepareRedeem(tokenRaw) {
     state.pendingToken = data.spend.token;
     document.getElementById("redeem-fio").textContent = data.spend.client_fio;
     document.getElementById("redeem-phone").textContent = data.spend.client_phone;
-    document.getElementById("redeem-balance").textContent = data.spend.client_coins;
-    const suggested = Math.min(
-      Number(data.suggested_coins || state.partner?.spend_coins || 2),
-      Number(data.spend.client_coins || 0) || 1
-    );
-    document.getElementById("redeem-coins").value = Math.max(1, suggested);
-    document.getElementById("redeem-coins").max = Math.max(1, data.spend.client_coins);
+    document.getElementById("redeem-valid").textContent = formatDate(data.spend.card_expires_at);
+    document.getElementById("redeem-balance").textContent = data.spend.privileges;
     document.getElementById("redeem-card").hidden = false;
     document.getElementById("redeem-status").textContent = "";
-    status.textContent = "QR распознан. Подтвердите списание.";
+    status.textContent = "QR распознан. Подтвердите привилегию.";
     await stopScanner();
   } catch (err) {
     status.textContent = err.message;
@@ -319,12 +341,9 @@ function bindScan() {
     try {
       const data = await api("/api/partner/redeem", {
         method: "POST",
-        body: JSON.stringify({
-          token: state.pendingToken,
-          coins: Number(document.getElementById("redeem-coins").value),
-        }),
+        body: JSON.stringify({ token: state.pendingToken }),
       });
-      status.textContent = `Списано ${data.coins_spent} монет у ${data.client_fio}.`;
+      status.textContent = `Привилегия подтверждена: ${data.client_fio}. Выдайте вторую позицию в подарок. Осталось привилегий у клиента: ${data.privileges_left}.`;
       renderStats(data.stats);
       state.pendingToken = "";
       setTimeout(() => {
@@ -345,14 +364,14 @@ function bindForms() {
       const data = await api("/api/partner/profile", {
         method: "POST",
         body: JSON.stringify({
-          spend_coins: Number(document.getElementById("offer-spend-coins").value),
-          city: state.partner.city,
-          address: state.partner.address,
-          comment: state.partner.comment,
+          privilege_text: document.getElementById("offer-privilege-text").value,
+          offer_active: document.getElementById("offer-active").checked,
         }),
       });
       state.partner = data.partner;
-      status.textContent = "Условия акции сохранены.";
+      status.textContent = data.partner.offer_active
+        ? "Условия акции сохранены. Акция активна."
+        : "Условия акции сохранены. Акция приостановлена — клиенты не видят вашу точку.";
     } catch (err) {
       status.textContent = err.message;
     }
@@ -374,7 +393,6 @@ function bindForms() {
           website: document.getElementById("profile-website").value,
           description: document.getElementById("profile-description").value,
           comment: document.getElementById("profile-comment").value,
-          spend_coins: state.partner.spend_coins,
         }),
       });
       state.partner = data.partner;
