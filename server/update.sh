@@ -52,7 +52,8 @@ main() {
   systemctl --no-pager --full status flowbonus | head -12
   echo
   curl -sS -m 10 -o /dev/null -w "app   = %{http_code}\n" http://127.0.0.1:5500/api/health || true
-  curl -sS -m 10 -o /dev/null -w "nginx = %{http_code}\n" http://127.0.0.1/ || true
+  # По IP nginx после certbot отдаёт 404 — проверяем сайт по доменному имени через HTTPS.
+  curl -sS -m 10 -o /dev/null -w "site  = %{http_code}\n" "${FLOWBONUS_SITE_URL:-https://flowbonus.ru}/api/health" || true
   echo "Готово."
 }
 
